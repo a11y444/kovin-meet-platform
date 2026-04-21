@@ -1,0 +1,103 @@
+# LiveKit Server Configuration
+# This is a template - the install.sh script generates a production version
+
+port: 7880
+
+rtc:
+  # RTC port range for WebRTC media
+  port_range_start: 50000
+  port_range_end: 50100
+  # TCP fallback port
+  tcp_port: 7881
+  # Use external IP for ICE candidates
+  use_external_ip: true
+  # Enable loopback for development
+  enable_loopback_candidate: true
+
+# Redis configuration for multi-node deployment
+redis:
+  address: redis:6379
+  # Password is set via LIVEKIT_REDIS_PASSWORD env var or config
+
+# TURN server configuration
+turn:
+  enabled: true
+  # Domain for TURN server
+  domain: localhost
+  # TLS port for TURN
+  tls_port: 5349
+  # UDP port for TURN
+  udp_port: 3478
+
+# API keys - set via environment variable LIVEKIT_KEYS
+# Format: "api_key: api_secret"
+# keys:
+#   your_api_key: your_api_secret
+
+# Logging configuration
+logging:
+  level: info
+  json: false
+  sample: true
+
+# Room configuration
+room:
+  # Enabled codecs for audio/video
+  enabled_codecs:
+    - mime: audio/opus
+      fmtp_line: ""
+    - mime: video/VP8
+    - mime: video/H264
+      fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f"
+    - mime: video/VP9
+    - mime: video/AV1
+  
+  # Maximum participants per room
+  max_participants: 100
+  
+  # Room empty timeout in seconds
+  empty_timeout: 300
+  
+  # Participant departure timeout
+  departure_timeout: 20
+  
+  # Enable dynacast for adaptive streaming
+  dynacast: true
+  
+  # Enable adaptive stream for bandwidth optimization
+  adaptive_stream: true
+
+# Recording configuration (Egress)
+egress:
+  # S3-compatible storage for recordings
+  s3:
+    access_key: ""
+    secret: ""
+    region: "us-east-1"
+    endpoint: "http://minio:9000"
+    bucket: "kovin-recordings"
+    force_path_style: true
+
+# Ingress configuration (RTMP/WHIP streaming)
+ingress:
+  rtmp_port: 1935
+  whip_port: 8085
+
+# Webhook configuration
+webhook:
+  # URLs to send webhook events
+  urls: []
+  # API key for webhook authentication
+  api_key: ""
+
+# Limits
+limit:
+  # Maximum number of rooms
+  num_tracks: 50
+  # Maximum bitrate per track (in bps)
+  max_subscription_bandwidth: 10000000
+  # Maximum publish bitrate (in bps)
+  max_publish_bandwidth: 10000000
+
+# Development mode settings
+dev: true
