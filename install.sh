@@ -392,10 +392,13 @@ ok "PostgreSQL ready"
 
 log "Installing dependencies (this takes a minute)..."
 cd "$DIR/app"
-npm install --legacy-peer-deps 2>&1 | tail -3
+npm install --legacy-peer-deps --ignore-scripts 2>&1 | tail -3
+
+log "Generating Prisma client..."
+npx prisma generate 2>&1 | tail -3
+ok "Prisma client generated"
 
 log "Setting up database..."
-npx prisma generate 2>&1 | tail -2
 npx prisma db push --accept-data-loss 2>&1 | tail -3
 ok "Database ready"
 
