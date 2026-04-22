@@ -400,7 +400,132 @@ npm install --legacy-peer-deps 2>&1 | tail -5
 ok "Dependencies installed"
 
 log "Setting up database schema..."
-docker exec -i kovin-postgres psql -U kovin -d kovin_meet < "$DIR/app/scripts/schema.sql" 2>&1 | tail -5
+docker exec -i kovin-postgres psql -U kovin -d kovin_meet << 'SCHEMA'
+CREATE TABLE IF NOT EXISTS "User" (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    "passwordHash" TEXT,
+    "firstName" TEXT,
+    "lastName" TEXT,
+    "displayName" TEXT,
+    "avatarUrl" TEXT,
+    "tenantId" TEXT,
+    "roleId" TEXT,
+    "isSuperAdmin" BOOLEAN DEFAULT false,
+    "isActive" BOOLEAN DEFAULT true,
+    "lastLoginAt" TIMESTAMP,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS "Tenant" (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    domain TEXT,
+    "logoUrl" TEXT,
+    "primaryColor" TEXT DEFAULT '#0066FF',
+    "isActive" BOOLEAN DEFAULT true,
+    settings JSONB DEFAULT '{}',
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS "Role" (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    "tenantId" TEXT REFERENCES "Tenant"(id) ON DELETE CASCADE,
+    permissions JSONB DEFAULT '[]',
+    "isDefault" BOOLEAN DEFAULT false,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS "Meeting" (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT,
+    "tenantId" TEXT REFERENCES "Tenant"(id) ON DELETE CASCADE,
+    "hostId" TEXT REFERENCES "User"(id),
+    "roomName" TEXT,
+    "scheduledAt" TIMESTAMP,
+    "startedAt" TIMESTAMP,
+    "endedAt" TIMESTAMP,
+    duration INTEGER,
+    status TEXT DEFAULT 'scheduled',
+    settings JSONB DEFAULT '{}',
+    "isRecording" BOOLEAN DEFAULT false,
+    "recordingUrl" TEXT,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS "Event" (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT,
+    "tenantId" TEXT REFERENCES "Tenant"(id) ON DELETE CASCADE,
+    "organizerId" TEXT REFERENCES "User"(id),
+    "startsAt" TIMESTAMP NOT NULL,
+    "endsAt" TIMESTAMP,
+    location TEXT,
+    "isPublic" BOOLEAN DEFAULT false,
+    "isOnline" BOOLEAN DEFAULT true,
+    "meetingId" TEXT REFERENCES "Meeting"(id),
+    "maxAttendees" INTEGER,
+    "imageUrl" TEXT,
+    settings JSONB DEFAULT '{}',
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS "Ticket" (
+    id TEXT PRIMARY KEY,
+    code TEXT UNIQUE NOT NULL,
+    "eventId" TEXT REFERENCES "Event"(id) ON DELETE CASCADE,
+    "userId" TEXT REFERENCES "User"(id),
+    "purchasedAt" TIMESTAMP DEFAULT NOW(),
+    "checkedInAt" TIMESTAMP,
+    status TEXT DEFAULT 'valid',
+    price DECIMAL(10,2),
+    "paymentId" TEXT,
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS "Recording" (
+    id TEXT PRIMARY KEY,
+    "meetingId" TEXT REFERENCES "Meeting"(id) ON DELETE CASCADE,
+    "tenantId" TEXT REFERENCES "Tenant"(id) ON DELETE CASCADE,
+    filename TEXT,
+    "fileUrl" TEXT,
+    "fileSize" BIGINT,
+    duration INTEGER,
+    status TEXT DEFAULT 'processing',
+    "createdAt" TIMESTAMP DEFAULT NOW(),
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS "AuditLog" (
+    id TEXT PRIMARY KEY,
+    "tenantId" TEXT REFERENCES "Tenant"(id) ON DELETE CASCADE,
+    "userId" TEXT REFERENCES "User"(id),
+    action TEXT NOT NULL,
+    entity TEXT,
+    "entityId" TEXT,
+    details JSONB,
+    "ipAddress" TEXT,
+    "createdAt" TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_email ON "User"(email);
+CREATE INDEX IF NOT EXISTS idx_user_tenant ON "User"("tenantId");
+CREATE INDEX IF NOT EXISTS idx_tenant_slug ON "Tenant"(slug);
+CREATE INDEX IF NOT EXISTS idx_meeting_tenant ON "Meeting"("tenantId");
+CREATE INDEX IF NOT EXISTS idx_event_tenant ON "Event"("tenantId");
+CREATE INDEX IF NOT EXISTS idx_ticket_event ON "Ticket"("eventId");
+CREATE INDEX IF NOT EXISTS idx_ticket_code ON "Ticket"(code);
+SCHEMA
 ok "Database schema ready"
 
 log "Creating superadmin..."
