@@ -502,38 +502,31 @@ services:
       - kovin-network
 
   # LiveKit Server
+  # Uses host network mode for optimal WebRTC performance
   livekit:
     image: livekit/livekit-server:latest
     container_name: kovin-livekit
     restart: unless-stopped
+    network_mode: host
     command: --config /etc/livekit.yaml
-    ports:
-      - "7881:7881/tcp"
-      - "50000-60000:50000-60000/udp"
+    environment:
+      LIVEKIT_KEYS: "\${LIVEKIT_API_KEY}:\${LIVEKIT_API_SECRET}"
     volumes:
       - ./config/livekit.yaml:/etc/livekit.yaml:ro
     depends_on:
       redis:
         condition: service_healthy
-    networks:
-      - kovin-network
 
   # Coturn TURN Server
+  # Uses host network mode for optimal WebRTC NAT traversal
   coturn:
     image: coturn/coturn:latest
     container_name: kovin-coturn
     restart: unless-stopped
-    ports:
-      - "3478:3478/tcp"
-      - "3478:3478/udp"
-      - "5349:5349/tcp"
-      - "5349:5349/udp"
-      - "49152-65535:49152-65535/udp"
+    network_mode: host
     volumes:
       - ./config/turnserver.conf:/etc/coturn/turnserver.conf:ro
       - ./certs:/etc/letsencrypt:ro
-    networks:
-      - kovin-network
 
   # Next.js Application
   app:
