@@ -91,20 +91,20 @@ declare module "next-auth" {
       email: string
       name?: string | null
       image?: string | null
-      tenantId: string
-      tenantSlug: string
-      roleId: string
-      roleName: string
+      tenantId: string | null
+      tenantSlug: string | null
+      roleId: string | null
+      roleName: string | null
       permissions: string[]
       isSuperAdmin: boolean
     }
   }
   
   interface User {
-    tenantId: string
-    tenantSlug: string
-    roleId: string
-    roleName: string
+    tenantId: string | null
+    tenantSlug: string | null
+    roleId: string | null
+    roleName: string | null
     permissions: string[]
     isSuperAdmin: boolean
   }
@@ -112,10 +112,10 @@ declare module "next-auth" {
 
 declare module "next-auth/jwt" {
   interface JWT {
-    tenantId: string
-    tenantSlug: string
-    roleId: string
-    roleName: string
+    tenantId: string | null
+    tenantSlug: string | null
+    roleId: string | null
+    roleName: string | null
     permissions: string[]
     isSuperAdmin: boolean
   }
@@ -154,7 +154,7 @@ export const authConfig: NextAuthConfig = {
       const pathname = nextUrl.pathname
       
       // Public routes
-      const publicRoutes = ["/", "/login", "/register", "/forgot-password", "/reset-password", "/events", "/meeting/join"]
+      const publicRoutes = ["/", "/login", "/register", "/forgot-password", "/reset-password", "/events", "/meeting/join", "/superadmin/login"]
       const isPublicRoute = publicRoutes.some(route => pathname === route || pathname.startsWith(`${route}/`))
       
       // Static files
@@ -163,8 +163,10 @@ export const authConfig: NextAuthConfig = {
       }
       
       // Super admin routes
-      if (pathname.startsWith("/superadmin")) {
-        if (!isLoggedIn) return false
+      if (pathname.startsWith("/superadmin") && !pathname.startsWith("/superadmin/login")) {
+        if (!isLoggedIn) {
+          return Response.redirect(new URL("/superadmin/login", nextUrl.origin))
+        }
         return isSuperAdmin
       }
       

@@ -17,10 +17,14 @@ import {
   Lock,
   Zap,
   Building2,
-  Palette
+  Palette,
+  Sun,
+  Moon
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { useI18n } from "@/components/providers/i18n-provider"
+import { useTheme } from "@/components/providers/theme-provider"
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -37,6 +41,67 @@ const stagger = {
 }
 
 export default function LandingPage() {
+  const { t, lang } = useI18n()
+  const { resolvedTheme, setTheme } = useTheme()
+
+  const features = [
+    {
+      icon: Video,
+      title: t("feature1Title"),
+      description: t("feature1Desc")
+    },
+    {
+      icon: Building2,
+      title: t("feature5Title"),
+      description: t("feature5Desc")
+    },
+    {
+      icon: Palette,
+      title: t("feature4Title"),
+      description: t("feature4Desc")
+    },
+    {
+      icon: Calendar,
+      title: t("calendar"),
+      description: lang === "de" 
+        ? "Planen und verwalten Sie Meetings mit integriertem Kalendersystem."
+        : "Schedule and manage meetings with a built-in calendar system."
+    },
+    {
+      icon: Ticket,
+      title: t("tickets"),
+      description: lang === "de"
+        ? "Verkaufen Sie Tickets für Webinare und virtuelle Events. QR-Code Check-in."
+        : "Sell tickets to webinars and virtual events. QR code check-in."
+    },
+    {
+      icon: Mail,
+      title: t("emailCampaigns"),
+      description: lang === "de"
+        ? "Integriertes E-Mail-System für Einladungen, Erinnerungen und Marketing."
+        : "Built-in email system for invitations, reminders, and marketing campaigns."
+    },
+    {
+      icon: Users,
+      title: t("roles"),
+      description: lang === "de"
+        ? "Granulare Berechtigungen mit anpassbaren Rollen."
+        : "Granular permissions with customizable roles."
+    },
+    {
+      icon: BarChart3,
+      title: t("analytics"),
+      description: lang === "de"
+        ? "Detaillierte Einblicke in Meeting-Nutzung und Engagement."
+        : "Detailed insights on meeting usage, attendance, and engagement metrics."
+    },
+    {
+      icon: Zap,
+      title: t("recording"),
+      description: t("feature3Desc")
+    }
+  ]
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -52,25 +117,38 @@ export default function LandingPage() {
             
             <nav className="hidden md:flex items-center gap-6">
               <Link href="#features" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                Features
+                {t("features")}
               </Link>
               <Link href="#enterprise" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
                 Enterprise
               </Link>
               <Link href="#security" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                Security
+                {lang === "de" ? "Sicherheit" : "Security"}
               </Link>
               <Link href="#contact" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                Contact
+                {t("contact")}
               </Link>
             </nav>
             
             <div className="flex items-center gap-3">
+              <button
+                onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+                className="p-2 rounded-lg hover:bg-muted transition-colors"
+                aria-label="Toggle theme"
+              >
+                {resolvedTheme === "dark" ? (
+                  <Sun className="w-5 h-5" />
+                ) : (
+                  <Moon className="w-5 h-5" />
+                )}
+              </button>
               <Link href="/login">
-                <Button variant="ghost" size="sm">Sign In</Button>
+                <Button variant="ghost" size="sm">{t("login")}</Button>
               </Link>
               <Link href="#contact">
-                <Button size="sm">Request Demo</Button>
+                <Button size="sm">
+                  {lang === "de" ? "Demo anfragen" : "Request Demo"}
+                </Button>
               </Link>
             </div>
           </div>
@@ -89,7 +167,7 @@ export default function LandingPage() {
             <motion.div variants={fadeInUp} className="mb-6">
               <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 text-accent text-sm font-medium">
                 <Server className="w-4 h-4" />
-                Self-Hosted Enterprise Platform
+                {t("feature6Title")}
               </span>
             </motion.div>
             
@@ -97,16 +175,17 @@ export default function LandingPage() {
               variants={fadeInUp}
               className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-balance"
             >
-              Enterprise Video Conferencing{" "}
-              <span className="text-gradient">On Your Terms</span>
+              {t("heroTitle")}{" "}
+              <span className="text-gradient">
+                {lang === "de" ? "nach Ihren Regeln" : "On Your Terms"}
+              </span>
             </motion.h1>
             
             <motion.p 
               variants={fadeInUp}
               className="mt-6 text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto text-pretty"
             >
-              KOVIN Meet is a fully self-hosted, white-label video conferencing platform 
-              designed for enterprises that demand complete control over their communication infrastructure.
+              {t("heroSubtitle")}
             </motion.p>
             
             <motion.div 
@@ -115,13 +194,13 @@ export default function LandingPage() {
             >
               <Link href="#contact">
                 <Button size="lg" className="gap-2">
-                  Schedule a Consultation
+                  {lang === "de" ? "Beratung vereinbaren" : "Schedule a Consultation"}
                   <ArrowRight className="w-4 h-4" />
                 </Button>
               </Link>
               <Link href="#features">
                 <Button size="lg" variant="outline">
-                  Explore Features
+                  {t("learnMore")}
                 </Button>
               </Link>
             </motion.div>
@@ -161,19 +240,27 @@ export default function LandingPage() {
           <div className="flex flex-wrap items-center justify-center gap-8 text-muted-foreground">
             <div className="flex items-center gap-2">
               <Shield className="w-5 h-5" />
-              <span className="text-sm font-medium">End-to-End Encryption</span>
+              <span className="text-sm font-medium">
+                {lang === "de" ? "Ende-zu-Ende-Verschlüsselung" : "End-to-End Encryption"}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <Server className="w-5 h-5" />
-              <span className="text-sm font-medium">100% Self-Hosted</span>
+              <span className="text-sm font-medium">
+                {lang === "de" ? "100% Selbst gehostet" : "100% Self-Hosted"}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <Lock className="w-5 h-5" />
-              <span className="text-sm font-medium">GDPR Compliant</span>
+              <span className="text-sm font-medium">
+                {lang === "de" ? "DSGVO-konform" : "GDPR Compliant"}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <Globe className="w-5 h-5" />
-              <span className="text-sm font-medium">Your Infrastructure</span>
+              <span className="text-sm font-medium">
+                {lang === "de" ? "Ihre Infrastruktur" : "Your Infrastructure"}
+              </span>
             </div>
           </div>
         </div>
@@ -184,62 +271,19 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl sm:text-4xl font-bold text-balance">
-              Everything You Need for Enterprise Communication
+              {lang === "de" 
+                ? "Alles was Sie für Enterprise-Kommunikation brauchen"
+                : "Everything You Need for Enterprise Communication"}
             </h2>
             <p className="mt-4 text-lg text-muted-foreground max-w-2xl mx-auto">
-              A complete platform that goes beyond video calls — manage meetings, events, tickets, 
-              and communications all in one place.
+              {lang === "de"
+                ? "Eine komplette Plattform, die über Videoanrufe hinausgeht - Meetings, Events, Tickets und Kommunikation an einem Ort."
+                : "A complete platform that goes beyond video calls — manage meetings, events, tickets, and communications all in one place."}
             </p>
           </div>
           
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[
-              {
-                icon: Video,
-                title: "HD Video Conferencing",
-                description: "Crystal-clear video and audio with WebRTC technology. Support for up to 500 participants per meeting."
-              },
-              {
-                icon: Building2,
-                title: "Multi-Tenant Architecture",
-                description: "Isolate departments, clients, or business units with complete data separation and custom branding."
-              },
-              {
-                icon: Palette,
-                title: "White-Label Ready",
-                description: "Full customization of branding, colors, logos, and domains. Make it truly yours."
-              },
-              {
-                icon: Calendar,
-                title: "Integrated Calendar",
-                description: "Schedule and manage meetings with a built-in calendar system. Sync with external calendars."
-              },
-              {
-                icon: Ticket,
-                title: "Event Ticketing",
-                description: "Sell tickets to webinars and virtual events. QR code check-in and capacity management."
-              },
-              {
-                icon: Mail,
-                title: "Email Campaigns",
-                description: "Built-in email system for invitations, reminders, and marketing campaigns."
-              },
-              {
-                icon: Users,
-                title: "Role-Based Access",
-                description: "Granular permissions with customizable roles. Control who can do what across your organization."
-              },
-              {
-                icon: BarChart3,
-                title: "Analytics Dashboard",
-                description: "Detailed insights on meeting usage, attendance, and engagement metrics."
-              },
-              {
-                icon: Zap,
-                title: "Recording & Storage",
-                description: "Record meetings and store them securely on your own infrastructure with MinIO."
-              }
-            ].map((feature, index) => (
+            {features.map((feature, index) => (
               <motion.div
                 key={feature.title}
                 initial={{ opacity: 0, y: 20 }}
@@ -268,22 +312,32 @@ export default function LandingPage() {
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             <div>
               <h2 className="text-3xl sm:text-4xl font-bold text-balance">
-                Built for Enterprise Requirements
+                {lang === "de" 
+                  ? "Entwickelt für Enterprise-Anforderungen"
+                  : "Built for Enterprise Requirements"}
               </h2>
               <p className="mt-4 text-lg text-sidebar-foreground/70">
-                KOVIN Meet is designed from the ground up to meet the stringent requirements 
-                of enterprise organizations. No compromises on security, compliance, or control.
+                {lang === "de"
+                  ? "KOVIN Meet wurde von Grund auf entwickelt, um die strengen Anforderungen von Unternehmensorganisationen zu erfüllen."
+                  : "KOVIN Meet is designed from the ground up to meet the stringent requirements of enterprise organizations."}
               </p>
               
               <ul className="mt-8 space-y-4">
-                {[
+                {(lang === "de" ? [
+                  "Deployment auf eigenen Servern oder privater Cloud",
+                  "Volle Datenhoheit und -souveränität",
+                  "Individuelle SSO und LDAP-Integration verfügbar",
+                  "Audit-Logs für Compliance-Anforderungen",
+                  "Dedizierter Support und Implementierungshilfe",
+                  "Source-Code-Escrow-Optionen verfügbar"
+                ] : [
                   "Deploy on your own servers or private cloud",
                   "Full data ownership and sovereignty",
                   "Custom SSO and LDAP integration available",
                   "Audit logs for compliance requirements",
                   "Dedicated support and implementation assistance",
                   "Source code escrow options available"
-                ].map((item) => (
+                ]).map((item) => (
                   <li key={item} className="flex items-start gap-3">
                     <CheckCircle2 className="w-5 h-5 text-sidebar-primary shrink-0 mt-0.5" />
                     <span className="text-sidebar-foreground/90">{item}</span>
@@ -294,7 +348,7 @@ export default function LandingPage() {
               <div className="mt-10">
                 <Link href="#contact">
                   <Button size="lg" variant="secondary" className="gap-2">
-                    Talk to Sales
+                    {lang === "de" ? "Vertrieb kontaktieren" : "Talk to Sales"}
                     <ArrowRight className="w-4 h-4" />
                   </Button>
                 </Link>
@@ -306,8 +360,12 @@ export default function LandingPage() {
                 <div className="h-full rounded-xl bg-sidebar-accent/50 flex items-center justify-center">
                   <div className="text-center">
                     <Server className="w-16 h-16 text-sidebar-primary mx-auto mb-4" />
-                    <p className="text-xl font-semibold">Your Infrastructure</p>
-                    <p className="text-sidebar-foreground/60 mt-2">Complete control, zero compromise</p>
+                    <p className="text-xl font-semibold">
+                      {lang === "de" ? "Ihre Infrastruktur" : "Your Infrastructure"}
+                    </p>
+                    <p className="text-sidebar-foreground/60 mt-2">
+                      {lang === "de" ? "Volle Kontrolle, keine Kompromisse" : "Complete control, zero compromise"}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -321,16 +379,30 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl sm:text-4xl font-bold text-balance">
-              Security Without Compromise
+              {lang === "de" ? "Sicherheit ohne Kompromisse" : "Security Without Compromise"}
             </h2>
             <p className="mt-4 text-lg text-muted-foreground max-w-2xl mx-auto">
-              Your data never leaves your infrastructure. Period. KOVIN Meet is built with 
-              security as a foundational principle, not an afterthought.
+              {lang === "de"
+                ? "Ihre Daten verlassen niemals Ihre Infrastruktur. KOVIN Meet wurde mit Sicherheit als Grundprinzip entwickelt."
+                : "Your data never leaves your infrastructure. KOVIN Meet is built with security as a foundational principle."}
             </p>
           </div>
           
           <div className="grid md:grid-cols-3 gap-8">
-            {[
+            {(lang === "de" ? [
+              {
+                title: "Ende-zu-Ende-Verschlüsselung",
+                description: "Alle Video-, Audio- und Chat-Kommunikationen werden mit branchenüblichen Protokollen verschlüsselt."
+              },
+              {
+                title: "Selbst gehostete Architektur",
+                description: "Deployment auf eigenen Servern. Ihre Daten, Ihre Regeln. Kein Zugriff durch Dritte."
+              },
+              {
+                title: "Audit-Protokollierung",
+                description: "Umfassende Audit-Trails für alle Aktionen. Erfüllen Sie Compliance-Anforderungen mit Leichtigkeit."
+              }
+            ] : [
               {
                 title: "End-to-End Encryption",
                 description: "All video, audio, and chat communications are encrypted using industry-standard protocols."
@@ -343,7 +415,7 @@ export default function LandingPage() {
                 title: "Audit Logging",
                 description: "Comprehensive audit trails for all actions. Meet compliance requirements with ease."
               }
-            ].map((item, index) => (
+            ]).map((item, index) => (
               <motion.div
                 key={item.title}
                 initial={{ opacity: 0, y: 20 }}
@@ -367,10 +439,14 @@ export default function LandingPage() {
       <section id="contact" className="py-24 px-4 sm:px-6 lg:px-8 bg-muted/30">
         <div className="max-w-3xl mx-auto text-center">
           <h2 className="text-3xl sm:text-4xl font-bold text-balance">
-            Ready to Take Control of Your Communications?
+            {lang === "de" 
+              ? "Bereit, die Kontrolle über Ihre Kommunikation zu übernehmen?"
+              : "Ready to Take Control of Your Communications?"}
           </h2>
           <p className="mt-4 text-lg text-muted-foreground">
-            Contact our team to discuss your requirements and get a personalized implementation plan.
+            {lang === "de"
+              ? "Kontaktieren Sie unser Team, um Ihre Anforderungen zu besprechen."
+              : "Contact our team to discuss your requirements and get a personalized implementation plan."}
           </p>
           
           <Card className="mt-10">
@@ -378,24 +454,28 @@ export default function LandingPage() {
               <form className="space-y-4">
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium mb-2">Name</label>
+                    <label className="block text-sm font-medium mb-2 text-left">
+                      {lang === "de" ? "Name" : "Name"}
+                    </label>
                     <input 
                       type="text" 
                       className="w-full px-4 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                      placeholder="Your name"
+                      placeholder={lang === "de" ? "Ihr Name" : "Your name"}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2">Company</label>
+                    <label className="block text-sm font-medium mb-2 text-left">
+                      {lang === "de" ? "Unternehmen" : "Company"}
+                    </label>
                     <input 
                       type="text" 
                       className="w-full px-4 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                      placeholder="Company name"
+                      placeholder={lang === "de" ? "Firmenname" : "Company name"}
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2">Email</label>
+                  <label className="block text-sm font-medium mb-2 text-left">{t("email")}</label>
                   <input 
                     type="email" 
                     className="w-full px-4 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-2 focus:ring-ring"
@@ -403,15 +483,17 @@ export default function LandingPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2">Message</label>
+                  <label className="block text-sm font-medium mb-2 text-left">
+                    {lang === "de" ? "Nachricht" : "Message"}
+                  </label>
                   <textarea 
                     rows={4}
                     className="w-full px-4 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-                    placeholder="Tell us about your requirements..."
+                    placeholder={lang === "de" ? "Erzählen Sie uns von Ihren Anforderungen..." : "Tell us about your requirements..."}
                   />
                 </div>
                 <Button type="submit" size="lg" className="w-full">
-                  Request Consultation
+                  {lang === "de" ? "Beratung anfragen" : "Request Consultation"}
                 </Button>
               </form>
             </CardContent>
@@ -431,15 +513,17 @@ export default function LandingPage() {
             </div>
             
             <p className="text-sm text-muted-foreground">
-              Enterprise video conferencing, self-hosted and white-label ready.
+              {lang === "de" 
+                ? "Enterprise-Videokonferenzen, selbst gehostet und White-Label-fähig."
+                : "Enterprise video conferencing, self-hosted and white-label ready."}
             </p>
             
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <Link href="/login" className="hover:text-foreground transition-colors">
-                Admin Login
+                {t("login")}
               </Link>
-              <Link href="/superadmin" className="hover:text-foreground transition-colors">
-                Platform Admin
+              <Link href="/superadmin/login" className="hover:text-foreground transition-colors">
+                {t("superadmin")}
               </Link>
             </div>
           </div>
