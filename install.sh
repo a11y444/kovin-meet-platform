@@ -949,4 +949,3 @@ EOF
 chmod 600 $INSTALL_DIR/credentials.txt
 log_warning "Credentials saved to: ${INSTALL_DIR}/credentials.txt"
 log_warning "Please store these credentials securely and delete this file!"
-EOF
