@@ -394,6 +394,9 @@ events {
 http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
+    
+    # Docker DNS resolver
+    resolver 127.0.0.11 valid=30s;
 
     log_format main '$remote_addr - $remote_user [$time_local] "$request" '
                     '$status $body_bytes_sent "$http_referer" '
@@ -420,19 +423,20 @@ http {
     limit_conn_zone $binary_remote_addr zone=conn:10m;
 
     # Upstream definitions
-    # Using 127.0.0.1 because services run with network_mode: host
+    # Using Docker service names for internal networking
     upstream nextjs {
-        server 127.0.0.1:3000;
+        server app:3000;
         keepalive 32;
     }
 
+    # LiveKit runs on host network, so use host.docker.internal
     upstream livekit {
-        server 127.0.0.1:7880;
+        server host.docker.internal:7880;
         keepalive 32;
     }
 
     upstream minio {
-        server 127.0.0.1:9000;
+        server minio:9000;
         keepalive 32;
     }
 
@@ -631,12 +635,13 @@ services:
       - ./certs:/etc/letsencrypt:ro
 
   # Next.js Application
+  # Using node:20-slim (Debian-based) instead of Alpine to avoid Prisma Bus errors
   app:
-    image: node:20-alpine
+    image: node:20-slim
     container_name: kovin-app
     restart: unless-stopped
     working_dir: /app
-    command: sh -c "npm install && npm run build && npm start"
+    command: sh -c "apt-get update && apt-get install -y openssl && npm install --legacy-peer-deps && npx prisma generate && npm run build && npm start"
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://kovin:${POSTGRES_PASSWORD}@postgres:5432/kovin_meet
@@ -659,24 +664,30 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    ports:
+      - "3000:3000"
     networks:
       - kovin-network
 
   # Nginx Reverse Proxy
-  # Uses host network mode to reach other host-networked services (livekit, app)
   nginx:
     image: nginx:alpine
     container_name: kovin-nginx
     restart: unless-stopped
-    network_mode: host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./certs:/etc/letsencrypt:ro
       - ./certbot-webroot:/var/www/certbot:ro
     depends_on:
       - app
-      - livekit
       - minio
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - kovin-network
 
   # Certbot for SSL
   certbot:
