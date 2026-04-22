@@ -190,18 +190,34 @@ log_success "Docker installed successfully"
 
 log_info "Creating installation directory..."
 
+# FIRST: Check for existing SSL certificates ANYWHERE and back them up
+CERTS_BACKED_UP=false
+mkdir -p /tmp/kovin-certs-backup
+
+# Check /etc/letsencrypt (system location)
+if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
+    log_info "Found SSL certificates in /etc/letsencrypt, backing up..."
+    cp -rL /etc/letsencrypt/* /tmp/kovin-certs-backup/ 2>/dev/null || true
+    CERTS_BACKED_UP=true
+fi
+
+# Check existing installation
+if [ -d "$INSTALL_DIR/certs/live/$DOMAIN" ]; then
+    log_info "Found SSL certificates in $INSTALL_DIR/certs, backing up..."
+    cp -r $INSTALL_DIR/certs/* /tmp/kovin-certs-backup/ 2>/dev/null || true
+    CERTS_BACKED_UP=true
+fi
+
+if [ "$CERTS_BACKED_UP" = "true" ]; then
+    log_success "SSL certificates backed up to /tmp/kovin-certs-backup"
+fi
+
 # Clean up any previous failed installation
 if [ -d "$INSTALL_DIR" ]; then
     log_warning "Previous installation found. Cleaning up..."
     # Stop any running containers
     cd $INSTALL_DIR && docker compose down 2>/dev/null || true
     cd ~
-    # Remove old installation but preserve certs if they exist
-    if [ -d "$INSTALL_DIR/certs/live" ]; then
-        log_info "Preserving existing SSL certificates..."
-        mkdir -p /tmp/kovin-certs-backup
-        cp -r $INSTALL_DIR/certs/* /tmp/kovin-certs-backup/ 2>/dev/null || true
-    fi
     rm -rf $INSTALL_DIR
 fi
 
@@ -216,10 +232,10 @@ mkdir -p $INSTALL_DIR/certs
 mkdir -p $INSTALL_DIR/logs
 
 # Restore certs if backed up
-if [ -d "/tmp/kovin-certs-backup/live" ]; then
+if [ "$CERTS_BACKED_UP" = "true" ] && [ -d "/tmp/kovin-certs-backup/live" ]; then
     log_info "Restoring SSL certificates..."
     cp -r /tmp/kovin-certs-backup/* $INSTALL_DIR/certs/ 2>/dev/null || true
-    rm -rf /tmp/kovin-certs-backup
+    log_success "SSL certificates restored"
 fi
 
 # ============================================================================
@@ -1161,6 +1177,9 @@ echo "============================================"
 echo "  KOVIN Meet Installation Complete!        "
 echo "============================================"
 echo ""
+# Clean up temporary cert backup
+rm -rf /tmp/kovin-certs-backup 2>/dev/null || true
+
 log_success "Installation completed successfully!"
 echo ""
 echo "Your KOVIN Meet platform is now available at:"
