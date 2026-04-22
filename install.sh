@@ -400,7 +400,7 @@ npx prisma db push --accept-data-loss 2>&1 | tail -3
 ok "Database ready"
 
 log "Creating superadmin..."
-cat > /tmp/seed.js << 'SEED'
+cat > "$DIR/app/seed-admin.js" << 'SEED'
 const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
 const prisma = new PrismaClient();
@@ -427,8 +427,9 @@ async function main() {
 main().finally(() => prisma.$disconnect());
 SEED
 
-ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASS="$ADMIN_PASS" node /tmp/seed.js
-rm /tmp/seed.js
+cd "$DIR/app"
+ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASS="$ADMIN_PASS" node seed-admin.js
+rm seed-admin.js
 
 log "Building app (this takes 2-3 minutes)..."
 npm run build 2>&1 | tail -5
@@ -446,19 +447,19 @@ ok "App started"
 # MANAGEMENT SCRIPTS
 # =============================================================================
 
-cat > "$DIR/start.sh" << 'EOF'
+cat > "$DIR/start.sh" << EOF
 #!/bin/bash
-cd /opt/kovin-meet && docker compose up -d && pm2 start kovin-app
+cd $DIR && docker compose up -d && pm2 start kovin-app
 EOF
 
-cat > "$DIR/stop.sh" << 'EOF'
+cat > "$DIR/stop.sh" << EOF
 #!/bin/bash
-pm2 stop kovin-app && cd /opt/kovin-meet && docker compose down
+pm2 stop kovin-app && cd $DIR && docker compose down
 EOF
 
-cat > "$DIR/restart.sh" << 'EOF'
+cat > "$DIR/restart.sh" << EOF
 #!/bin/bash
-pm2 restart kovin-app && cd /opt/kovin-meet && docker compose restart
+pm2 restart kovin-app && cd $DIR && docker compose restart
 EOF
 
 cat > "$DIR/logs.sh" << 'EOF'
