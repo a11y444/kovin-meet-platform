@@ -250,10 +250,16 @@ log_info "Script directory: $SCRIPT_DIR"
 if [ -f "$SCRIPT_DIR/package.json" ]; then
     log_info "Copying application from script directory..."
     mkdir -p $INSTALL_DIR/app
-    cp -r $SCRIPT_DIR/* $INSTALL_DIR/app/ 2>/dev/null || true
-    cp -r $SCRIPT_DIR/.env* $INSTALL_DIR/app/ 2>/dev/null || true
-    cp -r $SCRIPT_DIR/.git $INSTALL_DIR/app/ 2>/dev/null || true
-    cp -r $SCRIPT_DIR/.gitignore $INSTALL_DIR/app/ 2>/dev/null || true
+    
+    # Use rsync to copy while excluding node_modules, .next, and other build artifacts
+    if command -v rsync &> /dev/null; then
+        rsync -a --exclude='node_modules' --exclude='.next' --exclude='.turbo' --exclude='dist' "$SCRIPT_DIR/" "$INSTALL_DIR/app/"
+    else
+        # Fallback: copy everything except node_modules
+        cd "$SCRIPT_DIR"
+        find . -maxdepth 1 ! -name 'node_modules' ! -name '.next' ! -name '.turbo' ! -name 'dist' ! -name '.' -exec cp -r {} "$INSTALL_DIR/app/" \;
+    fi
+    
     log_success "Application copied successfully"
 else
     log_error "Could not find package.json in $SCRIPT_DIR"
