@@ -394,6 +394,9 @@ log "Installing dependencies (this takes a minute)..."
 cd "$DIR/app"
 npm install --legacy-peer-deps --ignore-scripts 2>&1 | tail -3
 
+log "Installing Prisma adapter packages..."
+npm install @prisma/adapter-pg pg dotenv --legacy-peer-deps 2>&1 | tail -2
+
 log "Generating Prisma client..."
 npx prisma generate 2>&1 | tail -3
 ok "Prisma client generated"
@@ -406,11 +409,13 @@ log "Creating superadmin..."
 cat > "$DIR/app/seed-admin.js" << 'SEED'
 require("dotenv").config();
 const { PrismaClient } = require("@prisma/client");
+const { PrismaPg } = require("@prisma/adapter-pg");
+const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 
-const prisma = new PrismaClient({
-  log: ["error"],
-});
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
   const email = process.env.ADMIN_EMAIL;
@@ -443,6 +448,7 @@ async function main() {
     });
   }
   console.log("Superadmin ready:", email);
+  await pool.end();
 }
 
 main()
