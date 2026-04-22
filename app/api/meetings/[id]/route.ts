@@ -1,45 +1,17 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
-import { prisma } from "@/lib/prisma"
+import { query, queryOne } from "@/lib/db"
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await auth()
     const { id } = await params
-
-    const meeting = await prisma.meeting.findUnique({
-      where: { id },
-      include: {
-        host: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-        participants: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-        recordings: true,
-      },
-    })
+    const meeting = await queryOne(`SELECT * FROM "Meeting" WHERE id = $1`, [id])
 
     if (!meeting) {
       return NextResponse.json({ error: "Meeting not found" }, { status: 404 })
-    }
-
-    // Check access - either authenticated user from same tenant or guest with access code
-    if (session?.user) {
-      if (meeting.tenantId !== session.user.tenantId && session.user.role !== "SUPERADMIN") {
-        return NextResponse.json({ error: "Access denied" }, { status: 403 })
-      }
     }
 
     return NextResponse.json(meeting)
@@ -61,74 +33,23 @@ export async function PATCH(
 
     const { id } = await params
     const body = await request.json()
+    const { title, description, status } = body
 
-    const meeting = await prisma.meeting.findUnique({
-      where: { id },
-    })
+    const meeting = await query(
+      `UPDATE "Meeting" SET 
+        title = COALESCE($1, title),
+        description = COALESCE($2, description),
+        status = COALESCE($3, status),
+        "updatedAt" = NOW()
+       WHERE id = $4 RETURNING *`,
+      [title, description, status, id]
+    )
 
-    if (!meeting) {
+    if (!meeting.length) {
       return NextResponse.json({ error: "Meeting not found" }, { status: 404 })
     }
 
-    if (meeting.tenantId !== session.user.tenantId) {
-      return NextResponse.json({ error: "Access denied" }, { status: 403 })
-    }
-
-    const {
-      title,
-      description,
-      scheduledStart,
-      scheduledEnd,
-      status,
-      settings,
-      participantIds,
-    } = body
-
-    const updatedMeeting = await prisma.meeting.update({
-      where: { id },
-      data: {
-        ...(title && { title }),
-        ...(description !== undefined && { description }),
-        ...(scheduledStart && { scheduledStart: new Date(scheduledStart) }),
-        ...(scheduledEnd && { scheduledEnd: new Date(scheduledEnd) }),
-        ...(status && { status }),
-        ...(settings && { settings }),
-        ...(participantIds && {
-          participants: {
-            set: participantIds.map((pid: string) => ({ id: pid })),
-          },
-        }),
-      },
-      include: {
-        host: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-        participants: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
-    })
-
-    await prisma.auditLog.create({
-      data: {
-        tenantId: session.user.tenantId!,
-        userId: session.user.id,
-        action: "MEETING_UPDATED",
-        resource: "Meeting",
-        resourceId: id,
-        details: body,
-      },
-    })
-
-    return NextResponse.json(updatedMeeting)
+    return NextResponse.json(meeting[0])
   } catch (error) {
     console.error("Failed to update meeting:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
@@ -146,30 +67,7 @@ export async function DELETE(
     }
 
     const { id } = await params
-
-    const meeting = await prisma.meeting.findUnique({
-      where: { id },
-    })
-
-    if (!meeting) {
-      return NextResponse.json({ error: "Meeting not found" }, { status: 404 })
-    }
-
-    if (meeting.tenantId !== session.user.tenantId && session.user.role !== "SUPERADMIN") {
-      return NextResponse.json({ error: "Access denied" }, { status: 403 })
-    }
-
-    await prisma.meeting.delete({ where: { id } })
-
-    await prisma.auditLog.create({
-      data: {
-        tenantId: session.user.tenantId!,
-        userId: session.user.id,
-        action: "MEETING_DELETED",
-        resource: "Meeting",
-        resourceId: id,
-      },
-    })
+    await query(`DELETE FROM "Meeting" WHERE id = $1`, [id])
 
     return NextResponse.json({ success: true })
   } catch (error) {

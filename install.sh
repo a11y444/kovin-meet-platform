@@ -397,18 +397,12 @@ ok "PostgreSQL ready"
 log "Installing dependencies (this takes a minute)..."
 cd "$DIR/app"
 npm install --legacy-peer-deps --ignore-scripts 2>&1 | tail -3
+ok "Dependencies installed"
 
-log "Installing Prisma adapter packages..."
-npm install @prisma/adapter-pg pg dotenv --legacy-peer-deps 2>&1 | tail -2
-
-log "Generating Prisma client..."
-npx prisma generate 2>&1 | tail -3
-ok "Prisma client generated"
-
-log "Setting up database..."
-cd "$DIR/app"
-DATABASE_URL="$DATABASE_URL" npx prisma db push --accept-data-loss 2>&1 | tail -5
-ok "Database ready"
+log "Setting up database schema..."
+# Run schema.sql directly via psql in docker
+docker exec -i kovin-postgres psql -U kovin -d kovin_meet < "$DIR/app/scripts/schema.sql" 2>&1 | tail -5
+ok "Database schema ready"
 
 log "Creating superadmin..."
 cat > "$DIR/app/seed-admin.js" << 'SEED'

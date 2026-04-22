@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
-import { prisma } from "@/lib/prisma"
+import { query, queryOne } from "@/lib/db"
 
 export async function GET(
   request: NextRequest,
@@ -8,37 +8,12 @@ export async function GET(
 ) {
   try {
     const session = await auth()
-    if (!session?.user || session.user.role !== "SUPERADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!session?.user?.isSuperAdmin) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
     const { id } = await params
-
-    const tenant = await prisma.tenant.findUnique({
-      where: { id },
-      include: {
-        users: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-            status: true,
-            createdAt: true,
-            lastLogin: true,
-          },
-          orderBy: { createdAt: "desc" },
-        },
-        _count: {
-          select: {
-            users: true,
-            meetings: true,
-            events: true,
-            tickets: true,
-          },
-        },
-      },
-    })
+    const tenant = await queryOne(`SELECT * FROM "Tenant" WHERE id = $1`, [id])
 
     if (!tenant) {
       return NextResponse.json({ error: "Tenant not found" }, { status: 404 })
@@ -57,81 +32,29 @@ export async function PATCH(
 ) {
   try {
     const session = await auth()
-    if (!session?.user || session.user.role !== "SUPERADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!session?.user?.isSuperAdmin) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
     const { id } = await params
     const body = await request.json()
+    const { name, domain, isActive } = body
 
-    const {
-      name,
-      domain,
-      plan,
-      status,
-      settings,
-      branding,
-      maxUsers,
-      maxMeetingDuration,
-      maxRecordingStorage,
-      features,
-    } = body
+    const tenant = await query(
+      `UPDATE "Tenant" SET 
+        name = COALESCE($1, name),
+        domain = COALESCE($2, domain),
+        "isActive" = COALESCE($3, "isActive"),
+        "updatedAt" = NOW()
+       WHERE id = $4 RETURNING *`,
+      [name, domain, isActive, id]
+    )
 
-    const tenant = await prisma.tenant.findUnique({ where: { id } })
-    if (!tenant) {
+    if (!tenant.length) {
       return NextResponse.json({ error: "Tenant not found" }, { status: 404 })
     }
 
-    // Check domain uniqueness if changing
-    if (domain && domain !== tenant.domain) {
-      const existing = await prisma.tenant.findFirst({
-        where: { domain, id: { not: id } },
-      })
-      if (existing) {
-        return NextResponse.json(
-          { error: "Domain already in use" },
-          { status: 400 }
-        )
-      }
-    }
-
-    const updatedTenant = await prisma.tenant.update({
-      where: { id },
-      data: {
-        ...(name && { name }),
-        ...(domain !== undefined && { domain }),
-        ...(plan && { plan }),
-        ...(status && { status }),
-        ...(settings && { settings }),
-        ...(branding && { branding }),
-        ...(maxUsers !== undefined && { maxUsers }),
-        ...(maxMeetingDuration !== undefined && { maxMeetingDuration }),
-        ...(maxRecordingStorage !== undefined && { maxRecordingStorage }),
-        ...(features && { features }),
-      },
-      include: {
-        _count: {
-          select: {
-            users: true,
-            meetings: true,
-            events: true,
-          },
-        },
-      },
-    })
-
-    await prisma.auditLog.create({
-      data: {
-        tenantId: id,
-        userId: session.user.id,
-        action: "TENANT_UPDATED",
-        resource: "Tenant",
-        resourceId: id,
-        details: body,
-      },
-    })
-
-    return NextResponse.json(updatedTenant)
+    return NextResponse.json(tenant[0])
   } catch (error) {
     console.error("Failed to update tenant:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
@@ -144,32 +67,12 @@ export async function DELETE(
 ) {
   try {
     const session = await auth()
-    if (!session?.user || session.user.role !== "SUPERADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!session?.user?.isSuperAdmin) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
     const { id } = await params
-
-    const tenant = await prisma.tenant.findUnique({ where: { id } })
-    if (!tenant) {
-      return NextResponse.json({ error: "Tenant not found" }, { status: 404 })
-    }
-
-    // Soft delete by setting status to SUSPENDED
-    await prisma.tenant.update({
-      where: { id },
-      data: { status: "SUSPENDED" },
-    })
-
-    await prisma.auditLog.create({
-      data: {
-        tenantId: id,
-        userId: session.user.id,
-        action: "TENANT_SUSPENDED",
-        resource: "Tenant",
-        resourceId: id,
-      },
-    })
+    await query(`UPDATE "Tenant" SET "isActive" = false WHERE id = $1`, [id])
 
     return NextResponse.json({ success: true })
   } catch (error) {

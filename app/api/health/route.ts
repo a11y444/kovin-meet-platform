@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { prisma } from "@/lib/prisma"
+import { pool } from "@/lib/db"
 
 export async function GET() {
   const checks: Record<string, { status: string; latency?: number; error?: string }> = {}
@@ -8,7 +8,7 @@ export async function GET() {
   // Check database
   try {
     const dbStart = Date.now()
-    await prisma.$queryRaw`SELECT 1`
+    await pool.query("SELECT 1")
     checks.database = {
       status: "healthy",
       latency: Date.now() - dbStart,

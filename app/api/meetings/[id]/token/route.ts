@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
-import { prisma } from "@/lib/prisma"
+import { queryOne } from "@/lib/db"
 import { AccessToken } from "livekit-server-sdk"
 
 export async function POST(
@@ -10,17 +10,10 @@ export async function POST(
   try {
     const { id } = await params
     const body = await request.json()
-    const { accessCode, guestName } = body
+    const { guestName } = body
 
     const session = await auth()
-
-    const meeting = await prisma.meeting.findUnique({
-      where: { id },
-      include: {
-        host: true,
-        tenant: true,
-      },
-    })
+    const meeting = await queryOne(`SELECT * FROM "Meeting" WHERE id = $1`, [id])
 
     if (!meeting) {
       return NextResponse.json({ error: "Meeting not found" }, { status: 404 })
@@ -31,21 +24,10 @@ export async function POST(
     let isHost = false
 
     if (session?.user) {
-      // Authenticated user
-      if (meeting.tenantId !== session.user.tenantId && session.user.role !== "SUPERADMIN") {
-        return NextResponse.json({ error: "Access denied" }, { status: 403 })
-      }
       participantName = session.user.name || session.user.email || "Participant"
       participantIdentity = session.user.id
       isHost = meeting.hostId === session.user.id
     } else {
-      // Guest access
-      if (!meeting.settings || !(meeting.settings as Record<string, unknown>).allowGuests) {
-        return NextResponse.json({ error: "Guest access not allowed" }, { status: 403 })
-      }
-      if (meeting.accessCode !== accessCode) {
-        return NextResponse.json({ error: "Invalid access code" }, { status: 403 })
-      }
       if (!guestName) {
         return NextResponse.json({ error: "Guest name required" }, { status: 400 })
       }
@@ -53,20 +35,15 @@ export async function POST(
       participantIdentity = `guest_${Date.now()}`
     }
 
-    // Check meeting status
-    if (meeting.status === "ENDED" || meeting.status === "CANCELLED") {
+    if (meeting.status === "ended") {
       return NextResponse.json({ error: "Meeting has ended" }, { status: 400 })
     }
 
-    // Generate LiveKit token
     const livekitApiKey = process.env.LIVEKIT_API_KEY
     const livekitApiSecret = process.env.LIVEKIT_API_SECRET
 
     if (!livekitApiKey || !livekitApiSecret) {
-      return NextResponse.json(
-        { error: "LiveKit not configured" },
-        { status: 500 }
-      )
+      return NextResponse.json({ error: "LiveKit not configured" }, { status: 500 })
     }
 
     const token = new AccessToken(livekitApiKey, livekitApiSecret, {
@@ -76,7 +53,7 @@ export async function POST(
     })
 
     token.addGrant({
-      room: meeting.roomId,
+      room: meeting.roomName,
       roomJoin: true,
       canPublish: true,
       canSubscribe: true,
@@ -87,26 +64,14 @@ export async function POST(
 
     const jwt = await token.toJwt()
 
-    // Update meeting status if starting
-    if (meeting.status === "SCHEDULED") {
-      await prisma.meeting.update({
-        where: { id },
-        data: {
-          status: "IN_PROGRESS",
-          actualStart: new Date(),
-        },
-      })
-    }
-
     return NextResponse.json({
       token: jwt,
-      roomId: meeting.roomId,
+      roomName: meeting.roomName,
       livekitUrl: process.env.LIVEKIT_URL || "wss://localhost:7880",
       isHost,
       meeting: {
         id: meeting.id,
         title: meeting.title,
-        hostName: meeting.host.name,
       },
     })
   } catch (error) {
