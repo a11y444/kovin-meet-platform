@@ -401,30 +401,50 @@ ok "Database ready"
 
 log "Creating superadmin..."
 cat > "$DIR/app/seed-admin.js" << 'SEED'
+require("dotenv").config();
 const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
-const prisma = new PrismaClient();
+
+const prisma = new PrismaClient({
+  log: ["error"],
+});
 
 async function main() {
   const email = process.env.ADMIN_EMAIL;
   const pass = process.env.ADMIN_PASS;
+  
+  if (!email || !pass) {
+    throw new Error("ADMIN_EMAIL and ADMIN_PASS must be set");
+  }
+  
   const hash = await bcrypt.hash(pass, 12);
   
-  await prisma.user.upsert({
-    where: { email },
-    update: { passwordHash: hash, isSuperAdmin: true, isActive: true },
-    create: {
-      email,
-      passwordHash: hash,
-      firstName: "Super",
-      lastName: "Admin", 
-      isSuperAdmin: true,
-      isActive: true
-    }
-  });
+  // Check if user exists
+  const existing = await prisma.user.findUnique({ where: { email } });
+  
+  if (existing) {
+    await prisma.user.update({
+      where: { email },
+      data: { passwordHash: hash, isSuperAdmin: true, isActive: true }
+    });
+  } else {
+    await prisma.user.create({
+      data: {
+        email,
+        passwordHash: hash,
+        firstName: "Super",
+        lastName: "Admin", 
+        isSuperAdmin: true,
+        isActive: true
+      }
+    });
+  }
   console.log("Superadmin ready:", email);
 }
-main().finally(() => prisma.$disconnect());
+
+main()
+  .catch(e => { console.error(e); process.exit(1); })
+  .finally(() => prisma.$disconnect());
 SEED
 
 cd "$DIR/app"
