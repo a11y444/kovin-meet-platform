@@ -783,6 +783,8 @@ docker run --rm \
     --email $SSL_EMAIL \
     --agree-tos \
     --no-eff-email \
+    --non-interactive \
+    --keep-until-expiring \
     -d $DOMAIN
 
 CERT_RESULT=$?
@@ -792,14 +794,19 @@ docker stop temp-nginx 2>/dev/null || true
 docker rm temp-nginx 2>/dev/null || true
 
 if [ $CERT_RESULT -ne 0 ]; then
-    log_error "Failed to obtain SSL certificate. Please check:"
-    log_error "1. Your domain ($DOMAIN) points to this server's IP ($SERVER_IP)"
-    log_error "2. Port 80 is accessible from the internet"
-    log_error "3. Your DNS records are properly configured"
-    exit 1
+    # Check if cert already exists (exit code 1 but cert is valid)
+    if [ -f "$INSTALL_DIR/certs/live/$DOMAIN/fullchain.pem" ]; then
+        log_warning "Certificate already exists and is valid, continuing..."
+    else
+        log_error "Failed to obtain SSL certificate. Please check:"
+        log_error "1. Your domain ($DOMAIN) points to this server's IP ($SERVER_IP)"
+        log_error "2. Port 80 is accessible from the internet"
+        log_error "3. Your DNS records are properly configured"
+        exit 1
+    fi
+else
+    log_success "SSL certificates obtained"
 fi
-
-log_success "SSL certificates obtained"
 
 # ============================================================================
 # CREATE SYSTEMD SERVICE
