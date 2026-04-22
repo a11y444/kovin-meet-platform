@@ -341,8 +341,12 @@ EOF
 # =============================================================================
 
 log "Creating environment file..."
+
+# Export DATABASE_URL for use in this script
+export DATABASE_URL="postgresql://kovin:$PG_PASS@localhost:5432/kovin_meet"
+
 cat > "$DIR/app/.env" << EOF
-DATABASE_URL=postgresql://kovin:$PG_PASS@localhost:5432/kovin_meet
+DATABASE_URL=$DATABASE_URL
 REDIS_URL=redis://:$REDIS_PASS@localhost:6379
 NEXTAUTH_URL=https://$DOMAIN
 NEXTAUTH_SECRET=$AUTH_SECRET
@@ -392,18 +396,12 @@ ok "PostgreSQL ready"
 
 log "Installing dependencies (this takes a minute)..."
 cd "$DIR/app"
-npm install --legacy-peer-deps --ignore-scripts 2>&1 | tail -3
+npm install --legacy-peer-deps 2>&1 | tail -5
+ok "Dependencies installed"
 
-log "Installing Prisma adapter packages..."
-npm install @prisma/adapter-pg pg dotenv --legacy-peer-deps 2>&1 | tail -2
-
-log "Generating Prisma client..."
-npx prisma generate 2>&1 | tail -3
-ok "Prisma client generated"
-
-log "Setting up database..."
-npx prisma db push --accept-data-loss 2>&1 | tail -3
-ok "Database ready"
+log "Setting up database schema..."
+docker exec -i kovin-postgres psql -U kovin -d kovin_meet < "$DIR/app/scripts/schema.sql" 2>&1 | tail -5
+ok "Database schema ready"
 
 log "Creating superadmin..."
 cat > "$DIR/app/seed-admin.js" << 'SEED'

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
-import { prisma } from "@/lib/prisma"
-import { nanoid } from "nanoid"
+import { query } from "@/lib/db"
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,45 +10,21 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url)
-    const status = searchParams.get("status")
     const limit = parseInt(searchParams.get("limit") || "50")
-    const offset = parseInt(searchParams.get("offset") || "0")
 
-    const where: Record<string, unknown> = {
-      tenantId: session.user.tenantId,
+    let sql = `SELECT * FROM "Meeting"`
+    const params: any[] = []
+    
+    if (session.user.tenantId) {
+      sql += ` WHERE "tenantId" = $1`
+      params.push(session.user.tenantId)
     }
+    
+    sql += ` ORDER BY "scheduledAt" DESC LIMIT $${params.length + 1}`
+    params.push(limit)
 
-    if (status) {
-      where.status = status
-    }
-
-    const [meetings, total] = await Promise.all([
-      prisma.meeting.findMany({
-        where,
-        include: {
-          host: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            },
-          },
-          participants: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            },
-          },
-        },
-        orderBy: { scheduledStart: "desc" },
-        take: limit,
-        skip: offset,
-      }),
-      prisma.meeting.count({ where }),
-    ])
-
-    return NextResponse.json({ meetings, total })
+    const meetings = await query(sql, params)
+    return NextResponse.json({ meetings, total: meetings.length })
   } catch (error) {
     console.error("Failed to fetch meetings:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
@@ -64,77 +39,22 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const {
-      title,
-      description,
-      scheduledStart,
-      scheduledEnd,
-      isRecurring,
-      recurringPattern,
-      participantIds,
-      settings,
-    } = body
+    const { title, description, scheduledAt } = body
 
-    if (!title || !scheduledStart) {
-      return NextResponse.json(
-        { error: "Title and scheduled start are required" },
-        { status: 400 }
-      )
+    if (!title) {
+      return NextResponse.json({ error: "Title is required" }, { status: 400 })
     }
 
-    const roomId = nanoid(12)
-    const accessCode = nanoid(8).toUpperCase()
+    const id = crypto.randomUUID()
+    const roomName = `room-${id.slice(0, 8)}`
+    
+    const meeting = await query(
+      `INSERT INTO "Meeting" (id, title, description, "roomName", "scheduledAt", status, "tenantId", "hostId", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, 'scheduled', $6, $7, NOW(), NOW()) RETURNING *`,
+      [id, title, description, roomName, scheduledAt ? new Date(scheduledAt) : new Date(), session.user.tenantId, session.user.id]
+    )
 
-    const meeting = await prisma.meeting.create({
-      data: {
-        tenantId: session.user.tenantId!,
-        hostId: session.user.id,
-        title,
-        description,
-        roomId,
-        accessCode,
-        scheduledStart: new Date(scheduledStart),
-        scheduledEnd: scheduledEnd ? new Date(scheduledEnd) : null,
-        isRecurring: isRecurring || false,
-        recurringPattern,
-        settings: settings || {},
-        participants: participantIds?.length
-          ? {
-              connect: participantIds.map((id: string) => ({ id })),
-            }
-          : undefined,
-      },
-      include: {
-        host: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-        participants: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
-    })
-
-    // Log the action
-    await prisma.auditLog.create({
-      data: {
-        tenantId: session.user.tenantId!,
-        userId: session.user.id,
-        action: "MEETING_CREATED",
-        resource: "Meeting",
-        resourceId: meeting.id,
-        details: { title, roomId },
-      },
-    })
-
-    return NextResponse.json(meeting, { status: 201 })
+    return NextResponse.json(meeting[0], { status: 201 })
   } catch (error) {
     console.error("Failed to create meeting:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })

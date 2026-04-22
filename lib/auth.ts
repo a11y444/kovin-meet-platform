@@ -1,7 +1,7 @@
 import NextAuth from "next-auth"
 import Credentials from "next-auth/providers/credentials"
 import { compare } from "bcryptjs"
-import { prisma } from "./prisma"
+import { db } from "./db"
 import { authConfig, PERMISSIONS, hasPermission, type Permission } from "./auth.config"
 
 export { PERMISSIONS, hasPermission, hasAnyPermission, hasAllPermissions } from "./auth.config"
@@ -15,7 +15,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
-        tenantSlug: { label: "Tenant", type: "text" },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
@@ -24,46 +23,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         const email = credentials.email as string
         const password = credentials.password as string
-        const tenantSlug = credentials.tenantSlug as string | undefined
 
-        // Find user - if tenantSlug provided, search within that tenant
-        // Otherwise, for super admins, they can log in without tenant context
-        let user
-        
-        if (tenantSlug) {
-          const tenant = await prisma.tenant.findUnique({
-            where: { slug: tenantSlug },
-          })
-          
-          if (!tenant || !tenant.isActive) {
-            throw new Error("Invalid tenant or tenant is inactive")
-          }
-          
-          user = await prisma.user.findUnique({
-            where: {
-              email_tenantId: {
-                email,
-                tenantId: tenant.id,
-              },
-            },
-            include: {
-              tenant: true,
-              role: true,
-            },
-          })
-        } else {
-          // Super admin login - find by email across all tenants
-          user = await prisma.user.findFirst({
-            where: {
-              email,
-              isSuperAdmin: true,
-            },
-            include: {
-              tenant: true,
-              role: true,
-            },
-          })
-        }
+        // Find user by email
+        const user = await db.users.findByEmail(email)
 
         if (!user || !user.isActive) {
           throw new Error("Invalid credentials or user is inactive")
@@ -78,25 +40,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           throw new Error("Invalid credentials")
         }
 
-        // Update last login
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { lastLoginAt: new Date() },
-        })
-
-        // Create audit log
-        await prisma.auditLog.create({
-          data: {
-            tenantId: user.tenantId,
-            userId: user.id,
-            action: "LOGIN",
-            entityType: "User",
-            entityId: user.id,
-            description: `User ${user.email} logged in`,
-          },
-        })
-
-        const permissions = (user.role?.permissions as string[]) || []
+        // Get tenant if user has one
+        let tenant = null
+        if (user.tenantId) {
+          tenant = await db.tenants.findById(user.tenantId)
+        }
 
         return {
           id: user.id,
@@ -104,11 +52,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           name: user.displayName || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
           image: user.avatarUrl,
           tenantId: user.tenantId || null,
-          tenantSlug: user.tenant?.slug || null,
+          tenantSlug: tenant?.slug || null,
           roleId: user.roleId || null,
-          roleName: user.role?.name || (user.isSuperAdmin ? "Superadmin" : null),
-          permissions,
-          isSuperAdmin: user.isSuperAdmin,
+          roleName: user.isSuperAdmin ? "Superadmin" : "User",
+          permissions: [],
+          isSuperAdmin: user.isSuperAdmin || false,
         }
       },
     }),
