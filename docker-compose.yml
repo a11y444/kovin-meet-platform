@@ -149,10 +149,12 @@ services:
       - kovin-network
 
   # Nginx Reverse Proxy (Production only)
+  # Uses host network mode to reach other host-networked services
   nginx:
     image: nginx:alpine
     container_name: kovin-nginx
     restart: unless-stopped
+    network_mode: host
     profiles:
       - production
     volumes:
@@ -163,11 +165,6 @@ services:
       - app
       - livekit
       - minio
-    ports:
-      - "80:80"
-      - "443:443"
-    networks:
-      - kovin-network
 
   # Certbot for SSL (Production only)
   certbot:
