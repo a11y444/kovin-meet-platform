@@ -731,6 +731,16 @@ systemctl disable httpd 2>/dev/null || true
 mkdir -p $INSTALL_DIR/certbot-webroot
 mkdir -p $INSTALL_DIR/config
 
+# IMPORTANT: Clean up if nginx-certbot.conf was incorrectly created as a directory
+# (this can happen from failed previous runs where Docker creates it as a dir)
+if [ -d "$INSTALL_DIR/config/nginx-certbot.conf" ]; then
+    log_warning "Removing incorrectly created directory: $INSTALL_DIR/config/nginx-certbot.conf"
+    rm -rf "$INSTALL_DIR/config/nginx-certbot.conf"
+fi
+
+# Also remove if it exists as a file to ensure fresh creation
+rm -f "$INSTALL_DIR/config/nginx-certbot.conf" 2>/dev/null || true
+
 # Create simple nginx config for certbot FIRST (before docker run)
 cat > $INSTALL_DIR/config/nginx-certbot.conf << 'CERTBOT_NGINX'
 server {
