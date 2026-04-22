@@ -121,7 +121,6 @@ apt-get install -y -qq \
     curl \
     gnupg \
     lsb-release \
-    software-properties-common \
     git \
     jq \
     ufw \
@@ -138,13 +137,26 @@ apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || 
 
 # Add Docker's official GPG key
 install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+# Detect distro for correct Docker repo
+if [[ "$OS" =~ "Ubuntu" ]]; then
+    DOCKER_DISTRO="ubuntu"
+elif [[ "$OS" =~ "Debian" ]]; then
+    DOCKER_DISTRO="debian"
+fi
+
+curl -fsSL https://download.docker.com/linux/${DOCKER_DISTRO}/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 chmod a+r /etc/apt/keyrings/docker.gpg
 
-# Add Docker repository
+# Add Docker repository (use bookworm for Debian 13 trixie as it may not be available yet)
+CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
+if [[ "$CODENAME" == "trixie" ]]; then
+    CODENAME="bookworm"
+fi
+
 echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${DOCKER_DISTRO} \
+  ${CODENAME} stable" | \
   tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 apt-get update -qq
