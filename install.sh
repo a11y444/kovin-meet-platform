@@ -690,17 +690,96 @@ log_success "Firewall configured"
 
 log_info "Obtaining SSL certificates..."
 
+# Check if port 80 is in use and stop conflicting services
+log_info "Checking for services using port 80..."
+PORT80_PID=$(lsof -t -i:80 2>/dev/null || true)
+if [ -n "$PORT80_PID" ]; then
+    log_warning "Port 80 is in use. Stopping conflicting services..."
+    
+    # Try to stop common web servers
+    systemctl stop apache2 2>/dev/null || true
+    systemctl stop nginx 2>/dev/null || true
+    systemctl stop httpd 2>/dev/null || true
+    systemctl stop lighttpd 2>/dev/null || true
+    
+    # Wait a moment
+    sleep 2
+    
+    # Check again
+    PORT80_PID=$(lsof -t -i:80 2>/dev/null || true)
+    if [ -n "$PORT80_PID" ]; then
+        log_warning "Still have processes on port 80. Attempting to kill..."
+        kill -9 $PORT80_PID 2>/dev/null || true
+        sleep 2
+    fi
+fi
+
+# Also check port 443
+PORT443_PID=$(lsof -t -i:443 2>/dev/null || true)
+if [ -n "$PORT443_PID" ]; then
+    log_warning "Port 443 is in use. Stopping conflicting services..."
+    kill -9 $PORT443_PID 2>/dev/null || true
+    sleep 2
+fi
+
+# Disable common web servers from auto-starting
+systemctl disable apache2 2>/dev/null || true
+systemctl disable nginx 2>/dev/null || true
+systemctl disable httpd 2>/dev/null || true
+
 # Create certbot webroot
 mkdir -p $INSTALL_DIR/certbot-webroot
 
+# Remove any existing temp-nginx container
+docker stop temp-nginx 2>/dev/null || true
+docker rm temp-nginx 2>/dev/null || true
+
 # Start nginx temporarily for ACME challenge
+log_info "Starting temporary nginx for SSL certificate verification..."
 docker run -d --name temp-nginx -p 80:80 \
     -v $INSTALL_DIR/certbot-webroot:/var/www/certbot \
+    -v $INSTALL_DIR/config/nginx-certbot.conf:/etc/nginx/conf.d/default.conf \
     nginx:alpine
+
+# Create simple nginx config for certbot
+mkdir -p $INSTALL_DIR/config
+cat > $INSTALL_DIR/config/nginx-certbot.conf << 'CERTBOT_NGINX'
+server {
+    listen 80;
+    server_name _;
+    
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+    
+    location / {
+        return 200 'KOVIN Meet - SSL Setup in Progress';
+        add_header Content-Type text/plain;
+    }
+}
+CERTBOT_NGINX
+
+# Restart temp-nginx with the config
+docker stop temp-nginx 2>/dev/null || true
+docker rm temp-nginx 2>/dev/null || true
+
+docker run -d --name temp-nginx -p 80:80 \
+    -v $INSTALL_DIR/certbot-webroot:/var/www/certbot \
+    -v $INSTALL_DIR/config/nginx-certbot.conf:/etc/nginx/conf.d/default.conf \
+    nginx:alpine
+
+if [ $? -ne 0 ]; then
+    log_error "Failed to start temporary nginx. Port 80 may still be in use."
+    log_error "Please manually stop the service using port 80 and run the installer again."
+    log_error "Run: sudo lsof -i:80    to find the process"
+    log_error "Run: sudo kill -9 <PID> to stop it"
+    exit 1
+fi
 
 sleep 5
 
 # Obtain certificate
+log_info "Requesting SSL certificate from Let's Encrypt..."
 docker run --rm \
     -v $INSTALL_DIR/certs:/etc/letsencrypt \
     -v $INSTALL_DIR/certbot-webroot:/var/www/certbot \
@@ -712,9 +791,19 @@ docker run --rm \
     --no-eff-email \
     -d $DOMAIN
 
+CERT_RESULT=$?
+
 # Stop temporary nginx
-docker stop temp-nginx
-docker rm temp-nginx
+docker stop temp-nginx 2>/dev/null || true
+docker rm temp-nginx 2>/dev/null || true
+
+if [ $CERT_RESULT -ne 0 ]; then
+    log_error "Failed to obtain SSL certificate. Please check:"
+    log_error "1. Your domain ($DOMAIN) points to this server's IP ($SERVER_IP)"
+    log_error "2. Port 80 is accessible from the internet"
+    log_error "3. Your DNS records are properly configured"
+    exit 1
+fi
 
 log_success "SSL certificates obtained"
 
