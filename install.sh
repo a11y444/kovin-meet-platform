@@ -228,22 +228,25 @@ fi
 
 log_info "Cloning KOVIN Meet application..."
 
-# Save current directory
-SCRIPT_DIR=$(pwd)
+# Get the directory where the script is located (not pwd which can change with sudo)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Copy from current directory if we're running from the repo
+log_info "Script directory: $SCRIPT_DIR"
+
+# Copy from script directory if we're running from the repo
 if [ -f "$SCRIPT_DIR/package.json" ]; then
-    log_info "Copying application from current directory..."
+    log_info "Copying application from script directory..."
     mkdir -p $INSTALL_DIR/app
     cp -r $SCRIPT_DIR/* $INSTALL_DIR/app/ 2>/dev/null || true
     cp -r $SCRIPT_DIR/.env* $INSTALL_DIR/app/ 2>/dev/null || true
-    cp -r $SCRIPT_DIR/.git* $INSTALL_DIR/app/ 2>/dev/null || true
+    cp -r $SCRIPT_DIR/.git $INSTALL_DIR/app/ 2>/dev/null || true
+    cp -r $SCRIPT_DIR/.gitignore $INSTALL_DIR/app/ 2>/dev/null || true
+    log_success "Application copied successfully"
 else
-    log_info "Cloning from GitHub repository..."
-    git clone https://github.com/a11y444/kovin-meet-platform.git $INSTALL_DIR/app || {
-        log_error "Could not clone from GitHub. Please run this script from the kovin-app directory."
-        exit 1
-    }
+    log_error "Could not find package.json in $SCRIPT_DIR"
+    log_error "Please run this script from the kovin-app directory:"
+    log_error "  cd ~/kovin-app && sudo ./install.sh"
+    exit 1
 fi
 
 # ============================================================================
