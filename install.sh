@@ -189,11 +189,38 @@ log_success "Docker installed successfully"
 # ============================================================================
 
 log_info "Creating installation directory..."
+
+# Clean up any previous failed installation
+if [ -d "$INSTALL_DIR" ]; then
+    log_warning "Previous installation found. Cleaning up..."
+    # Stop any running containers
+    cd $INSTALL_DIR && docker compose down 2>/dev/null || true
+    cd ~
+    # Remove old installation but preserve certs if they exist
+    if [ -d "$INSTALL_DIR/certs/live" ]; then
+        log_info "Preserving existing SSL certificates..."
+        mkdir -p /tmp/kovin-certs-backup
+        cp -r $INSTALL_DIR/certs/* /tmp/kovin-certs-backup/ 2>/dev/null || true
+    fi
+    rm -rf $INSTALL_DIR
+fi
+
 mkdir -p $INSTALL_DIR
 mkdir -p $INSTALL_DIR/data/postgres
 mkdir -p $INSTALL_DIR/data/redis
 mkdir -p $INSTALL_DIR/data/minio
-mkdir -p $INSTALL_DIR/app
+mkdir -p $INSTALL_DIR/data/livekit
+mkdir -p $INSTALL_DIR/data/recordings
+mkdir -p $INSTALL_DIR/config
+mkdir -p $INSTALL_DIR/certs
+mkdir -p $INSTALL_DIR/logs
+
+# Restore certs if backed up
+if [ -d "/tmp/kovin-certs-backup/live" ]; then
+    log_info "Restoring SSL certificates..."
+    cp -r /tmp/kovin-certs-backup/* $INSTALL_DIR/certs/ 2>/dev/null || true
+    rm -rf /tmp/kovin-certs-backup
+fi
 
 # ============================================================================
 # CLONE APPLICATION CODE
@@ -201,29 +228,23 @@ mkdir -p $INSTALL_DIR/app
 
 log_info "Cloning KOVIN Meet application..."
 
-# Check if app directory has content
-if [ -d "$INSTALL_DIR/app/.git" ]; then
-    log_info "Application already cloned, pulling latest changes..."
-    cd $INSTALL_DIR/app
-    git pull origin main || true
+# Save current directory
+SCRIPT_DIR=$(pwd)
+
+# Copy from current directory if we're running from the repo
+if [ -f "$SCRIPT_DIR/package.json" ]; then
+    log_info "Copying application from current directory..."
+    mkdir -p $INSTALL_DIR/app
+    cp -r $SCRIPT_DIR/* $INSTALL_DIR/app/ 2>/dev/null || true
+    cp -r $SCRIPT_DIR/.env* $INSTALL_DIR/app/ 2>/dev/null || true
+    cp -r $SCRIPT_DIR/.git* $INSTALL_DIR/app/ 2>/dev/null || true
 else
-    # Clone from GitHub (public repo) or copy from current directory
-    if [ -f "./package.json" ] && grep -q "kovin-meet" "./package.json" 2>/dev/null; then
-        log_info "Copying application from current directory..."
-        cp -r ./* $INSTALL_DIR/app/ 2>/dev/null || true
-        cp -r ./.* $INSTALL_DIR/app/ 2>/dev/null || true
-    else
-        log_info "Cloning from GitHub repository..."
-        git clone https://github.com/a11y444/kovin-meet-platform.git $INSTALL_DIR/app || {
-            log_warning "Could not clone from GitHub. Please copy the app manually to $INSTALL_DIR/app"
-        }
-    fi
+    log_info "Cloning from GitHub repository..."
+    git clone https://github.com/a11y444/kovin-meet-platform.git $INSTALL_DIR/app || {
+        log_error "Could not clone from GitHub. Please run this script from the kovin-app directory."
+        exit 1
+    }
 fi
-mkdir -p $INSTALL_DIR/data/livekit
-mkdir -p $INSTALL_DIR/data/recordings
-mkdir -p $INSTALL_DIR/config
-mkdir -p $INSTALL_DIR/certs
-mkdir -p $INSTALL_DIR/logs
 
 # ============================================================================
 # CREATE LIVEKIT CONFIGURATION
