@@ -2,6 +2,9 @@
 const nextConfig = {
   output: "standalone",
   
+  // Enable Turbopack for Next.js 16
+  turbopack: {},
+  
   typescript: {
     ignoreBuildErrors: true,
   },
