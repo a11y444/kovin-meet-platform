@@ -1,7 +1,8 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter, Geist_Mono } from 'next/font/google'
-import { Analytics } from '@vercel/analytics/next'
 import { SessionProvider } from '@/components/providers/session-provider'
+import { ThemeProvider } from '@/components/providers/theme-provider'
+import { I18nProvider } from '@/components/providers/i18n-provider'
 import './globals.css'
 
 const inter = Inter({ 
@@ -43,7 +44,7 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#0a1628' },
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
     { media: '(prefers-color-scheme: dark)', color: '#0a1628' },
   ],
   width: 'device-width',
@@ -56,12 +57,29 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${geistMono.variable} bg-background`}>
-      <body className="font-sans antialiased min-h-screen">
-        <SessionProvider>
-          {children}
-        </SessionProvider>
-        {process.env.NODE_ENV === 'production' && <Analytics />}
+    <html lang="en" className={`${inter.variable} ${geistMono.variable}`} suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                const theme = localStorage.getItem('kovin-theme') || 'system';
+                const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                const resolved = theme === 'system' ? (systemDark ? 'dark' : 'light') : theme;
+                document.documentElement.classList.add(resolved);
+              })();
+            `,
+          }}
+        />
+      </head>
+      <body className="font-sans antialiased min-h-screen bg-background text-foreground">
+        <ThemeProvider>
+          <I18nProvider>
+            <SessionProvider>
+              {children}
+            </SessionProvider>
+          </I18nProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

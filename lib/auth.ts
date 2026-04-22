@@ -96,17 +96,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           },
         })
 
-        const permissions = (user.role.permissions as string[]) || []
+        const permissions = (user.role?.permissions as string[]) || []
 
         return {
           id: user.id,
           email: user.email,
           name: user.displayName || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
           image: user.avatarUrl,
-          tenantId: user.tenantId,
-          tenantSlug: user.tenant.slug,
-          roleId: user.roleId,
-          roleName: user.role.name,
+          tenantId: user.tenantId || null,
+          tenantSlug: user.tenant?.slug || null,
+          roleId: user.roleId || null,
+          roleName: user.role?.name || (user.isSuperAdmin ? "Superadmin" : null),
           permissions,
           isSuperAdmin: user.isSuperAdmin,
         }

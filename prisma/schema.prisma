@@ -80,13 +80,13 @@ model User {
   timezone      String    @default("UTC")
   locale        String    @default("en")
   
-  // Multi-tenant
-  tenantId      String
-  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // Multi-tenant (optional for superadmins)
+  tenantId      String?
+  tenant        Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   
-  // Role-based access
-  roleId        String
-  role          Role      @relation(fields: [roleId], references: [id])
+  // Role-based access (optional for superadmins)
+  roleId        String?
+  role          Role?     @relation(fields: [roleId], references: [id])
   
   // Status
   isActive      Boolean   @default(true)
@@ -108,9 +108,12 @@ model User {
   auditLogs         AuditLog[]
   sentEmails        EmailLog[]
   
-  @@unique([email, tenantId])
+  // For tenant users: email + tenantId must be unique
+  // For superadmins: email must be unique when tenantId is null
+  @@unique([email, tenantId], name: "email_tenantId")
   @@index([tenantId])
   @@index([email])
+  @@index([isSuperAdmin])
 }
 
 model Account {

@@ -2,20 +2,16 @@
 
 import { useState } from "react"
 import { signIn } from "next-auth/react"
-import { useRouter, useSearchParams } from "next/navigation"
-import Link from "next/link"
-import { Video, Eye, EyeOff, AlertCircle, Loader2 } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { Shield, Eye, EyeOff, AlertCircle, Lock } from "lucide-react"
 import { useI18n } from "@/components/providers/i18n-provider"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
-export default function LoginPage() {
+export default function SuperadminLoginPage() {
   const { t } = useI18n()
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const callbackUrl = searchParams.get("callbackUrl") || "/admin"
-  
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
@@ -37,7 +33,7 @@ export default function LoginPage() {
       if (result?.error) {
         setError(t("invalidCredentials"))
       } else {
-        router.push(callbackUrl)
+        router.push("/superadmin")
         router.refresh()
       }
     } catch {
@@ -54,19 +50,27 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <Link href="/" className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-4">
-            <Video className="h-8 w-8 text-primary" />
-          </Link>
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-4">
+            <Shield className="h-8 w-8 text-primary" />
+          </div>
           <h1 className="text-2xl font-bold text-foreground">
-            {t("welcomeBack")}
+            {t("superadminLogin")}
           </h1>
           <p className="text-muted-foreground mt-2">
-            {t("signInToAccount")}
+            {t("superadminLoginDescription")}
           </p>
         </div>
 
         {/* Login Card */}
         <div className="bg-card border border-border rounded-xl shadow-lg p-8">
+          {/* Security Notice */}
+          <div className="flex items-start gap-3 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg mb-6">
+            <Lock className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-amber-700 dark:text-amber-300">
+              {t("superadminOnly")}
+            </p>
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-5">
             {error && (
               <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
@@ -84,7 +88,7 @@ export default function LoginPage() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="name@company.com"
+                placeholder="admin@example.com"
                 required
                 autoComplete="email"
                 className="h-11"
@@ -92,17 +96,9 @@ export default function LoginPage() {
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="password" className="text-foreground">
-                  {t("password")}
-                </Label>
-                <Link 
-                  href="/forgot-password" 
-                  className="text-sm text-primary hover:underline"
-                >
-                  {t("forgotPassword")}
-                </Link>
-              </div>
+              <Label htmlFor="password" className="text-foreground">
+                {t("password")}
+              </Label>
               <div className="relative">
                 <Input
                   id="password"
@@ -132,23 +128,14 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full h-11 bg-primary hover:bg-primary/90"
             >
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {t("loading")}
-                </>
-              ) : (
-                t("login")
-              )}
+              {loading ? t("loading") : t("login")}
             </Button>
           </form>
         </div>
 
         {/* Footer */}
         <p className="text-center text-sm text-muted-foreground mt-6">
-          <Link href="/" className="hover:text-foreground transition-colors">
-            {t("back")} - KOVIN Meet
-          </Link>
+          KOVIN Meet Platform Administration
         </p>
       </div>
     </div>

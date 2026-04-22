@@ -77,6 +77,22 @@ if [ -z "$SSL_EMAIL" ]; then
     exit 1
 fi
 
+# Get superadmin credentials
+echo ""
+log_info "Configure Superadmin Account"
+read -p "Superadmin Email: " SUPERADMIN_EMAIL
+if [ -z "$SUPERADMIN_EMAIL" ]; then
+    SUPERADMIN_EMAIL="admin@${DOMAIN}"
+    log_info "Using default: $SUPERADMIN_EMAIL"
+fi
+
+read -sp "Superadmin Password (min 8 chars): " SUPERADMIN_PASSWORD
+echo ""
+if [ -z "$SUPERADMIN_PASSWORD" ] || [ ${#SUPERADMIN_PASSWORD} -lt 8 ]; then
+    SUPERADMIN_PASSWORD=$(openssl rand -base64 12)
+    log_warning "Generated password: $SUPERADMIN_PASSWORD"
+fi
+
 # Get server public IP
 SERVER_IP=$(curl -s ifconfig.me || curl -s icanhazip.com)
 log_info "Detected server IP: $SERVER_IP"
@@ -177,6 +193,32 @@ mkdir -p $INSTALL_DIR
 mkdir -p $INSTALL_DIR/data/postgres
 mkdir -p $INSTALL_DIR/data/redis
 mkdir -p $INSTALL_DIR/data/minio
+mkdir -p $INSTALL_DIR/app
+
+# ============================================================================
+# CLONE APPLICATION CODE
+# ============================================================================
+
+log_info "Cloning KOVIN Meet application..."
+
+# Check if app directory has content
+if [ -d "$INSTALL_DIR/app/.git" ]; then
+    log_info "Application already cloned, pulling latest changes..."
+    cd $INSTALL_DIR/app
+    git pull origin main || true
+else
+    # Clone from GitHub (public repo) or copy from current directory
+    if [ -f "./package.json" ] && grep -q "kovin-meet" "./package.json" 2>/dev/null; then
+        log_info "Copying application from current directory..."
+        cp -r ./* $INSTALL_DIR/app/ 2>/dev/null || true
+        cp -r ./.* $INSTALL_DIR/app/ 2>/dev/null || true
+    else
+        log_info "Cloning from GitHub repository..."
+        git clone https://github.com/a11y444/kovin-meet-platform.git $INSTALL_DIR/app || {
+            log_warning "Could not clone from GitHub. Please copy the app manually to $INSTALL_DIR/app"
+        }
+    fi
+fi
 mkdir -p $INSTALL_DIR/data/livekit
 mkdir -p $INSTALL_DIR/data/recordings
 mkdir -p $INSTALL_DIR/config
@@ -952,9 +994,90 @@ sleep 30
 
 log_info "Initializing database..."
 
-# Run Prisma migrations
-docker exec kovin-app npx prisma migrate deploy 2>/dev/null || true
-docker exec kovin-app npx prisma db push 2>/dev/null || true
+# Wait for PostgreSQL to be ready
+log_info "Waiting for PostgreSQL..."
+until docker exec kovin-postgres pg_isready -U kovin -d kovin_meet > /dev/null 2>&1; do
+    sleep 2
+done
+
+# Install Node.js dependencies and build the app
+log_info "Building application (this may take a few minutes)..."
+cd $INSTALL_DIR/app
+
+# Install Node.js if not present
+if ! command -v node &> /dev/null; then
+    log_info "Installing Node.js..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y nodejs
+fi
+
+# Install dependencies and build
+npm install --legacy-peer-deps
+npx prisma generate
+npx prisma db push --accept-data-loss
+
+# Create superadmin user
+log_info "Creating superadmin user..."
+cat > $INSTALL_DIR/app/scripts/create-superadmin.ts << 'SEEDEOF'
+import { PrismaClient } from "@prisma/client"
+import bcrypt from "bcryptjs"
+
+const prisma = new PrismaClient()
+
+async function main() {
+  const email = process.env.SUPERADMIN_EMAIL || "admin@localhost"
+  const password = process.env.SUPERADMIN_PASSWORD || "Admin123!"
+  
+  const hashedPassword = await bcrypt.hash(password, 12)
+  
+  // Check if user exists
+  const existing = await prisma.user.findFirst({
+    where: { email }
+  })
+  
+  if (existing) {
+    await prisma.user.update({
+      where: { id: existing.id },
+      data: {
+        passwordHash: hashedPassword,
+        isSuperAdmin: true,
+        isActive: true,
+      },
+    })
+    console.log("Superadmin updated:", email)
+  } else {
+    await prisma.user.create({
+      data: {
+        email,
+        passwordHash: hashedPassword,
+        firstName: "Super",
+        lastName: "Admin",
+        isSuperAdmin: true,
+        isActive: true,
+      },
+    })
+    console.log("Superadmin created:", email)
+  }
+}
+
+main()
+  .catch(console.error)
+  .finally(() => prisma.$disconnect())
+SEEDEOF
+
+SUPERADMIN_EMAIL="$SUPERADMIN_EMAIL" SUPERADMIN_PASSWORD="$SUPERADMIN_PASSWORD" npx tsx $INSTALL_DIR/app/scripts/create-superadmin.ts
+
+# Build the Next.js app
+log_info "Building Next.js application..."
+npm run build
+
+# Start the app with PM2 or directly
+log_info "Starting application..."
+npm install -g pm2 2>/dev/null || true
+pm2 delete kovin-app 2>/dev/null || true
+pm2 start npm --name "kovin-app" -- start
+pm2 save
+pm2 startup systemd -u root --hp /root 2>/dev/null || true
 
 # ============================================================================
 # PRINT SUMMARY
@@ -1008,15 +1131,23 @@ echo ""
 echo "SystemD:  systemctl [start|stop|restart] kovin-meet"
 echo ""
 echo "============================================"
+echo "  SUPERADMIN LOGIN                         "
+echo "============================================"
+echo ""
+echo "Login URL: https://${DOMAIN}/superadmin/login"
+echo "Email:     ${SUPERADMIN_EMAIL}"
+echo "Password:  ${SUPERADMIN_PASSWORD}"
+echo ""
+echo "============================================"
 echo "  NEXT STEPS                               "
 echo "============================================"
 echo ""
-echo "1. Copy your Next.js application to: ${INSTALL_DIR}/app/"
-echo "2. Run: cd ${INSTALL_DIR} && docker compose restart app"
-echo "3. Create your first superadmin user"
+echo "1. Open https://${DOMAIN}/superadmin/login"
+echo "2. Login with the superadmin credentials above"
+echo "3. Create tenants and users from the admin panel"
 echo "4. Configure your DNS to point to: ${SERVER_IP}"
 echo ""
-echo "For support, visit: https://github.com/your-repo/kovin-meet"
+echo "For support, visit: https://github.com/a11y444/kovin-meet-platform"
 echo ""
 
 # Save credentials to file
@@ -1044,6 +1175,11 @@ LiveKit:
 
 NextAuth Secret: ${NEXTAUTH_SECRET}
 TURN Secret: ${TURN_SECRET}
+
+Superadmin:
+  Login URL: https://${DOMAIN}/superadmin/login
+  Email: ${SUPERADMIN_EMAIL}
+  Password: ${SUPERADMIN_PASSWORD}
 EOF
 
 chmod 600 $INSTALL_DIR/credentials.txt
