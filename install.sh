@@ -407,57 +407,42 @@ ok "Database ready"
 
 log "Creating superadmin..."
 cat > "$DIR/app/seed-admin.js" << 'SEED'
-require("dotenv").config();
-const { PrismaClient } = require("@prisma/client");
-const { PrismaPg } = require("@prisma/adapter-pg");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
 
 async function main() {
   const email = process.env.ADMIN_EMAIL;
   const pass = process.env.ADMIN_PASS;
+  const dbUrl = process.env.DATABASE_URL;
   
-  if (!email || !pass) {
-    throw new Error("ADMIN_EMAIL and ADMIN_PASS must be set");
+  if (!email || !pass || !dbUrl) {
+    throw new Error("ADMIN_EMAIL, ADMIN_PASS, DATABASE_URL must be set");
   }
   
+  const pool = new Pool({ connectionString: dbUrl });
   const hash = await bcrypt.hash(pass, 12);
+  const id = require("crypto").randomUUID();
   
-  // Check if user exists
-  const existing = await prisma.user.findUnique({ where: { email } });
+  // Use raw SQL - bypasses all Prisma issues
+  await pool.query(`
+    INSERT INTO "User" (id, email, "passwordHash", "firstName", "lastName", "isSuperAdmin", "isActive", "createdAt", "updatedAt")
+    VALUES ($1, $2, $3, 'Super', 'Admin', true, true, NOW(), NOW())
+    ON CONFLICT (email) DO UPDATE SET
+      "passwordHash" = $3,
+      "isSuperAdmin" = true,
+      "isActive" = true,
+      "updatedAt" = NOW()
+  `, [id, email, hash]);
   
-  if (existing) {
-    await prisma.user.update({
-      where: { email },
-      data: { passwordHash: hash, isSuperAdmin: true, isActive: true }
-    });
-  } else {
-    await prisma.user.create({
-      data: {
-        email,
-        passwordHash: hash,
-        firstName: "Super",
-        lastName: "Admin", 
-        isSuperAdmin: true,
-        isActive: true
-      }
-    });
-  }
   console.log("Superadmin ready:", email);
   await pool.end();
 }
 
-main()
-  .catch(e => { console.error(e); process.exit(1); })
-  .finally(() => prisma.$disconnect());
+main().catch(e => { console.error(e); process.exit(1); });
 SEED
 
 cd "$DIR/app"
-ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASS="$ADMIN_PASS" node seed-admin.js
+ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASS="$ADMIN_PASS" DATABASE_URL="$DATABASE_URL" node seed-admin.js
 rm seed-admin.js
 
 log "Building app (this takes 2-3 minutes)..."
