@@ -766,6 +766,34 @@ log_success "Firewall configured"
 
 log_info "Obtaining SSL certificates..."
 
+# Check if valid certificates already exist (from previous installation or backup)
+if [ -f "$INSTALL_DIR/certs/live/$DOMAIN/fullchain.pem" ] && [ -f "$INSTALL_DIR/certs/live/$DOMAIN/privkey.pem" ]; then
+    # Check if cert is still valid (not expired)
+    if openssl x509 -checkend 86400 -noout -in "$INSTALL_DIR/certs/live/$DOMAIN/fullchain.pem" 2>/dev/null; then
+        log_success "Valid SSL certificates already exist, skipping certificate request"
+        SKIP_CERTBOT=true
+    else
+        log_warning "Existing certificate is expired or invalid, requesting new one..."
+        SKIP_CERTBOT=false
+    fi
+else
+    # Also check system certbot location
+    if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/$DOMAIN/privkey.pem" ]; then
+        log_info "Found certificates in /etc/letsencrypt, copying..."
+        mkdir -p "$INSTALL_DIR/certs"
+        cp -rL /etc/letsencrypt/* "$INSTALL_DIR/certs/" 2>/dev/null || true
+        if [ -f "$INSTALL_DIR/certs/live/$DOMAIN/fullchain.pem" ]; then
+            log_success "Certificates copied successfully"
+            SKIP_CERTBOT=true
+        else
+            SKIP_CERTBOT=false
+        fi
+    else
+        SKIP_CERTBOT=false
+    fi
+fi
+
+if [ "$SKIP_CERTBOT" = "false" ]; then
 # Check if port 80 is in use and stop conflicting services
 log_info "Checking for services using port 80..."
 PORT80_PID=$(lsof -t -i:80 2>/dev/null || true)
@@ -890,6 +918,8 @@ if [ $CERT_RESULT -ne 0 ]; then
 else
     log_success "SSL certificates obtained"
 fi
+
+fi  # End of SKIP_CERTBOT check
 
 # ============================================================================
 # CREATE SYSTEMD SERVICE
