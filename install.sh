@@ -319,18 +319,19 @@ http {
     limit_conn_zone $binary_remote_addr zone=conn:10m;
 
     # Upstream definitions
+    # Using 127.0.0.1 because services run with network_mode: host
     upstream nextjs {
-        server app:3000;
+        server 127.0.0.1:3000;
         keepalive 32;
     }
 
     upstream livekit {
-        server livekit:7880;
+        server 127.0.0.1:7880;
         keepalive 32;
     }
 
     upstream minio {
-        server minio:9000;
+        server 127.0.0.1:9000;
         keepalive 32;
     }
 
@@ -561,13 +562,12 @@ services:
       - kovin-network
 
   # Nginx Reverse Proxy
+  # Uses host network mode to reach other host-networked services (livekit, app)
   nginx:
     image: nginx:alpine
     container_name: kovin-nginx
     restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
+    network_mode: host
     volumes:
       - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./certs:/etc/letsencrypt:ro
@@ -576,8 +576,6 @@ services:
       - app
       - livekit
       - minio
-    networks:
-      - kovin-network
 
   # Certbot for SSL
   certbot:
