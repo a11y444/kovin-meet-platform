@@ -228,8 +228,21 @@ fi
 
 log_info "Cloning KOVIN Meet application..."
 
-# Get the directory where the script is located (not pwd which can change with sudo)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the directory where the script is located
+# When run with sudo, we need to resolve the actual path of the script
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+if [ -L "$SCRIPT_PATH" ]; then
+    SCRIPT_PATH="$(readlink -f "$SCRIPT_PATH")"
+fi
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# If SCRIPT_DIR is /root, try to find it via SUDO_USER's home
+if [ "$SCRIPT_DIR" = "/root" ] && [ -n "$SUDO_USER" ]; then
+    SUDO_USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+    if [ -f "$SUDO_USER_HOME/kovin-app/package.json" ]; then
+        SCRIPT_DIR="$SUDO_USER_HOME/kovin-app"
+    fi
+fi
 
 log_info "Script directory: $SCRIPT_DIR"
 
