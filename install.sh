@@ -396,7 +396,8 @@ ok "PostgreSQL ready"
 
 log "Installing dependencies (this takes a minute)..."
 cd "$DIR/app"
-npm install --legacy-peer-deps 2>&1 | tail -5
+chown -R "$APP_USER:$APP_USER" "$DIR"
+sudo -u "$APP_USER" npm install --legacy-peer-deps 2>&1 | tail -5
 ok "Dependencies installed"
 
 log "Setting up database schema..."
@@ -565,19 +566,24 @@ main().catch(e => { console.error(e); process.exit(1); });
 SEED
 
 cd "$DIR/app"
-ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASS="$ADMIN_PASS" DATABASE_URL="$DATABASE_URL" node seed-admin.js
+chown "$APP_USER:$APP_USER" seed-admin.js
+sudo -u "$APP_USER" bash -c "ADMIN_EMAIL='$ADMIN_EMAIL' ADMIN_PASS='$ADMIN_PASS' DATABASE_URL='$DATABASE_URL' node seed-admin.js"
 rm seed-admin.js
+ok "Superadmin created"
 
 log "Building app (this takes 2-3 minutes)..."
-npm run build 2>&1 | tail -5
+sudo -u "$APP_USER" npm run build 2>&1 | tail -10
 ok "Build complete"
 
 log "Starting app with PM2..."
-pm2 delete kovin-app 2>/dev/null || true
+sudo -u "$APP_USER" pm2 delete kovin-app 2>/dev/null || true
 cd "$DIR/app"
-pm2 start npm --name "kovin-app" -- start
-pm2 save
+sudo -u "$APP_USER" pm2 start npm --name "kovin-app" -- start
+sudo -u "$APP_USER" pm2 save
+
+# Setup PM2 to start on boot
 env PATH=$PATH:/usr/bin pm2 startup systemd -u "$APP_USER" --hp "/home/$APP_USER" 2>/dev/null || true
+systemctl enable pm2-$APP_USER 2>/dev/null || true
 ok "App started"
 
 # =============================================================================
