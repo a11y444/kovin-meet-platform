@@ -341,8 +341,12 @@ EOF
 # =============================================================================
 
 log "Creating environment file..."
+
+# Export DATABASE_URL for use in this script
+export DATABASE_URL="postgresql://kovin:$PG_PASS@localhost:5432/kovin_meet"
+
 cat > "$DIR/app/.env" << EOF
-DATABASE_URL=postgresql://kovin:$PG_PASS@localhost:5432/kovin_meet
+DATABASE_URL=$DATABASE_URL
 REDIS_URL=redis://:$REDIS_PASS@localhost:6379
 NEXTAUTH_URL=https://$DOMAIN
 NEXTAUTH_SECRET=$AUTH_SECRET
@@ -402,7 +406,8 @@ npx prisma generate 2>&1 | tail -3
 ok "Prisma client generated"
 
 log "Setting up database..."
-npx prisma db push --accept-data-loss 2>&1 | tail -3
+cd "$DIR/app"
+DATABASE_URL="$DATABASE_URL" npx prisma db push --accept-data-loss 2>&1 | tail -5
 ok "Database ready"
 
 log "Creating superadmin..."
