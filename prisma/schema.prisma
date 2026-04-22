@@ -67,7 +67,7 @@ model Tenant {
 
 model User {
   id            String    @id @default(cuid())
-  email         String
+  email         String    @unique
   emailVerified DateTime?
   passwordHash  String?
   
@@ -108,11 +108,7 @@ model User {
   auditLogs         AuditLog[]
   sentEmails        EmailLog[]
   
-  // For tenant users: email + tenantId must be unique
-  // For superadmins: email must be unique when tenantId is null
-  @@unique([email, tenantId], name: "email_tenantId")
   @@index([tenantId])
-  @@index([email])
   @@index([isSuperAdmin])
 }
 

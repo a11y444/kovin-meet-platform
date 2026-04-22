@@ -1,1279 +1,571 @@
 #!/bin/bash
-
-# ============================================================================
-# KOVIN Meet - Self-Hosted Installation Script
-# ============================================================================
-# This script automatically installs and configures all dependencies for
-# KOVIN Meet on a Debian/Ubuntu server including:
-# - Docker & Docker Compose
-# - PostgreSQL
-# - Redis
-# - MinIO (S3-compatible storage)
-# - LiveKit (self-hosted WebRTC SFU)
-# - Coturn (TURN server for NAT traversal)
-# - Nginx reverse proxy
-# - Certbot SSL certificates
-# ============================================================================
+# =============================================================================
+# KOVIN Meet - Complete Self-Hosted Installation Script
+# =============================================================================
+# Tested on: Ubuntu 22.04 LTS (RECOMMENDED)
+# 
+# Usage:
+#   1. Get a fresh Ubuntu 22.04 VPS
+#   2. Point your domain to the server IP
+#   3. SSH as root and run:
+#      git clone https://github.com/a11y444/kovin-meet-platform.git
+#      cd kovin-meet-platform
+#      chmod +x install.sh
+#      ./install.sh
+# =============================================================================
 
 set -e
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Logging functions
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log() { echo -e "${BLUE}[*]${NC} $1"; }
+ok() { echo -e "${GREEN}[OK]${NC} $1"; }
+warn() { echo -e "${YELLOW}[!]${NC} $1"; }
+err() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-# Check if running as root
-if [[ $EUID -ne 0 ]]; then
-   log_error "This script must be run as root (use sudo)"
-   exit 1
-fi
+# =============================================================================
+# CHECKS
+# =============================================================================
 
-# Detect OS
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    OS=$NAME
-    VER=$VERSION_ID
-else
-    log_error "Cannot detect OS. This script supports Debian/Ubuntu only."
-    exit 1
-fi
+[ "$EUID" -ne 0 ] && err "Run as root: sudo ./install.sh"
 
-log_info "Detected OS: $OS $VER"
+clear
+echo "========================================"
+echo "     KOVIN Meet - Installation"
+echo "========================================"
+echo ""
 
-if [[ ! "$OS" =~ "Ubuntu" && ! "$OS" =~ "Debian" ]]; then
-    log_error "This script only supports Ubuntu and Debian."
-    exit 1
-fi
-
-# ============================================================================
+# =============================================================================
 # CONFIGURATION
-# ============================================================================
+# =============================================================================
 
-echo ""
-echo "============================================"
-echo "  KOVIN Meet - Installation Configuration  "
-echo "============================================"
-echo ""
+read -p "Domain (e.g., meet.example.com): " DOMAIN
+[ -z "$DOMAIN" ] && err "Domain required"
 
-# Get domain name
-read -p "Enter your domain name (e.g., meet.example.com): " DOMAIN
-if [ -z "$DOMAIN" ]; then
-    log_error "Domain name is required"
-    exit 1
+read -p "Email for SSL: " EMAIL
+[ -z "$EMAIL" ] && EMAIL="admin@$DOMAIN"
+
+read -p "Superadmin email [$EMAIL]: " ADMIN_EMAIL
+ADMIN_EMAIL=${ADMIN_EMAIL:-$EMAIL}
+
+read -sp "Superadmin password (min 8 chars, Enter for random): " ADMIN_PASS
+echo ""
+if [ -z "$ADMIN_PASS" ] || [ ${#ADMIN_PASS} -lt 8 ]; then
+    ADMIN_PASS=$(openssl rand -base64 12)
+    warn "Generated password: $ADMIN_PASS"
 fi
 
-# Get email for SSL
-read -p "Enter your email for SSL certificates: " SSL_EMAIL
-if [ -z "$SSL_EMAIL" ]; then
-    log_error "Email is required for SSL certificates"
-    exit 1
-fi
+# Generate all secrets
+PG_PASS=$(openssl rand -hex 16)
+REDIS_PASS=$(openssl rand -hex 16)
+AUTH_SECRET=$(openssl rand -base64 32)
+LK_KEY="API$(openssl rand -hex 6)"
+LK_SECRET=$(openssl rand -base64 32)
+TURN_SECRET=$(openssl rand -hex 16)
+MINIO_USER="kovin"
+MINIO_PASS=$(openssl rand -hex 16)
 
-# Get superadmin credentials
+SERVER_IP=$(curl -s -4 ifconfig.me 2>/dev/null || curl -s icanhazip.com)
+APP_USER="kovin"
+DIR="/home/$APP_USER/kovin-meet"
+
 echo ""
-log_info "Configure Superadmin Account"
-read -p "Superadmin Email: " SUPERADMIN_EMAIL
-if [ -z "$SUPERADMIN_EMAIL" ]; then
-    SUPERADMIN_EMAIL="admin@${DOMAIN}"
-    log_info "Using default: $SUPERADMIN_EMAIL"
-fi
-
-read -sp "Superadmin Password (min 8 chars): " SUPERADMIN_PASSWORD
-echo ""
-if [ -z "$SUPERADMIN_PASSWORD" ] || [ ${#SUPERADMIN_PASSWORD} -lt 8 ]; then
-    SUPERADMIN_PASSWORD=$(openssl rand -base64 12)
-    log_warning "Generated password: $SUPERADMIN_PASSWORD"
-fi
-
-# Get server public IP
-SERVER_IP=$(curl -s ifconfig.me || curl -s icanhazip.com)
-log_info "Detected server IP: $SERVER_IP"
-
-# Generate secure passwords and keys
-generate_password() {
-    openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32
-}
-
-generate_api_key() {
-    openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 48
-}
-
-# Configuration variables
-POSTGRES_PASSWORD=$(generate_password)
-REDIS_PASSWORD=$(generate_password)
-MINIO_ROOT_USER="kovinadmin"
-MINIO_ROOT_PASSWORD=$(generate_password)
-LIVEKIT_API_KEY="API$(generate_api_key | head -c 12)"
-LIVEKIT_API_SECRET=$(generate_api_key)
-NEXTAUTH_SECRET=$(generate_api_key)
-TURN_SECRET=$(generate_password)
-
-# Installation directory
-INSTALL_DIR="/opt/kovin-meet"
-
-log_info "Configuration complete. Starting installation..."
+log "Domain: $DOMAIN"
+log "Server IP: $SERVER_IP"
 echo ""
 
-# ============================================================================
-# INSTALL DEPENDENCIES
-# ============================================================================
+# =============================================================================
+# CREATE USER
+# =============================================================================
 
-log_info "Updating system packages..."
+if id "$APP_USER" &>/dev/null; then
+    log "User $APP_USER exists"
+else
+    log "Creating user $APP_USER..."
+    useradd -m -s /bin/bash "$APP_USER"
+    ok "User created"
+fi
+
+# =============================================================================
+# SYSTEM UPDATE
+# =============================================================================
+
+log "Updating system..."
+export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get upgrade -y -qq
+ok "System updated"
 
-log_info "Installing required packages..."
-apt-get install -y -qq \
-    apt-transport-https \
-    ca-certificates \
-    curl \
-    gnupg \
-    lsb-release \
-    git \
-    jq \
-    ufw \
-    fail2ban
+# =============================================================================
+# INSTALL PACKAGES
+# =============================================================================
 
-# ============================================================================
-# INSTALL DOCKER
-# ============================================================================
+log "Installing packages..."
+apt-get install -y -qq curl wget git jq ufw openssl
 
-log_info "Installing Docker..."
-
-# Remove old versions
-apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
-
-# Add Docker's official GPG key
-install -m 0755 -d /etc/apt/keyrings
-
-# Detect distro for correct Docker repo
-if [[ "$OS" =~ "Ubuntu" ]]; then
-    DOCKER_DISTRO="ubuntu"
-elif [[ "$OS" =~ "Debian" ]]; then
-    DOCKER_DISTRO="debian"
+# Docker
+if ! command -v docker &>/dev/null; then
+    log "Installing Docker..."
+    curl -fsSL https://get.docker.com | sh
+    systemctl enable docker
+    systemctl start docker
 fi
+ok "Docker ready"
 
-curl -fsSL https://download.docker.com/linux/${DOCKER_DISTRO}/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-
-# Add Docker repository (use bookworm for Debian 13 trixie as it may not be available yet)
-CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
-if [[ "$CODENAME" == "trixie" ]]; then
-    CODENAME="bookworm"
+# Node.js 20
+if ! command -v node &>/dev/null; then
+    log "Installing Node.js..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y -qq nodejs
 fi
+ok "Node.js $(node -v)"
 
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${DOCKER_DISTRO} \
-  ${CODENAME} stable" | \
-  tee /etc/apt/sources.list.d/docker.list > /dev/null
+# PM2
+npm install -g pm2 --silent 2>/dev/null
+ok "PM2 ready"
 
-apt-get update -qq
-apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+# =============================================================================
+# DIRECTORIES
+# =============================================================================
 
-# Start and enable Docker
-systemctl start docker
-systemctl enable docker
+log "Creating directories..."
+rm -rf "$DIR" 2>/dev/null || true
+mkdir -p "$DIR"/{data/postgres,data/redis,data/minio,certs,config}
 
-log_success "Docker installed successfully"
-
-# ============================================================================
-# CREATE INSTALLATION DIRECTORY
-# ============================================================================
-
-log_info "Creating installation directory..."
-
-# FIRST: Check for existing SSL certificates ANYWHERE and back them up
-CERTS_BACKED_UP=false
-mkdir -p /tmp/kovin-certs-backup
-
-# Check /etc/letsencrypt (system location)
-if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
-    log_info "Found SSL certificates in /etc/letsencrypt, backing up..."
-    cp -rL /etc/letsencrypt/* /tmp/kovin-certs-backup/ 2>/dev/null || true
-    CERTS_BACKED_UP=true
-fi
-
-# Check existing installation
-if [ -d "$INSTALL_DIR/certs/live/$DOMAIN" ]; then
-    log_info "Found SSL certificates in $INSTALL_DIR/certs, backing up..."
-    cp -r $INSTALL_DIR/certs/* /tmp/kovin-certs-backup/ 2>/dev/null || true
-    CERTS_BACKED_UP=true
-fi
-
-if [ "$CERTS_BACKED_UP" = "true" ]; then
-    log_success "SSL certificates backed up to /tmp/kovin-certs-backup"
-fi
-
-# Clean up any previous failed installation
-if [ -d "$INSTALL_DIR" ]; then
-    log_warning "Previous installation found. Cleaning up..."
-    # Stop any running containers
-    cd $INSTALL_DIR && docker compose down 2>/dev/null || true
-    cd ~
-    rm -rf $INSTALL_DIR
-fi
-
-mkdir -p $INSTALL_DIR
-mkdir -p $INSTALL_DIR/data/postgres
-mkdir -p $INSTALL_DIR/data/redis
-mkdir -p $INSTALL_DIR/data/minio
-mkdir -p $INSTALL_DIR/data/livekit
-mkdir -p $INSTALL_DIR/data/recordings
-mkdir -p $INSTALL_DIR/config
-mkdir -p $INSTALL_DIR/certs
-mkdir -p $INSTALL_DIR/logs
-
-# Restore certs if backed up
-if [ "$CERTS_BACKED_UP" = "true" ] && [ -d "/tmp/kovin-certs-backup/live" ]; then
-    log_info "Restoring SSL certificates..."
-    cp -r /tmp/kovin-certs-backup/* $INSTALL_DIR/certs/ 2>/dev/null || true
-    log_success "SSL certificates restored"
-fi
-
-# ============================================================================
-# CLONE APPLICATION CODE
-# ============================================================================
-
-log_info "Cloning KOVIN Meet application..."
-
-# Get the directory where the script is located
-# When run with sudo, we need to resolve the actual path of the script
-SCRIPT_PATH="${BASH_SOURCE[0]}"
-if [ -L "$SCRIPT_PATH" ]; then
-    SCRIPT_PATH="$(readlink -f "$SCRIPT_PATH")"
-fi
-SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
-
-# If SCRIPT_DIR is /root, try to find it via SUDO_USER's home
-if [ "$SCRIPT_DIR" = "/root" ] && [ -n "$SUDO_USER" ]; then
-    SUDO_USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-    if [ -f "$SUDO_USER_HOME/kovin-app/package.json" ]; then
-        SCRIPT_DIR="$SUDO_USER_HOME/kovin-app"
-    fi
-fi
-
-log_info "Script directory: $SCRIPT_DIR"
-
-# Copy from script directory if we're running from the repo
+# Copy app from current directory
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$SCRIPT_DIR/package.json" ]; then
-    log_info "Copying application from script directory..."
-    mkdir -p $INSTALL_DIR/app
-    
-    # Use rsync to copy while excluding node_modules, .next, and other build artifacts
-    if command -v rsync &> /dev/null; then
-        rsync -a --exclude='node_modules' --exclude='.next' --exclude='.turbo' --exclude='dist' "$SCRIPT_DIR/" "$INSTALL_DIR/app/"
-    else
-        # Fallback: copy everything except node_modules
-        cd "$SCRIPT_DIR"
-        find . -maxdepth 1 ! -name 'node_modules' ! -name '.next' ! -name '.turbo' ! -name 'dist' ! -name '.' -exec cp -r {} "$INSTALL_DIR/app/" \;
-    fi
-    
-    log_success "Application copied successfully"
+    mkdir -p "$DIR/app"
+    rsync -a --exclude='node_modules' --exclude='.next' --exclude='.git' "$SCRIPT_DIR/" "$DIR/app/"
+    ok "App copied"
 else
-    log_error "Could not find package.json in $SCRIPT_DIR"
-    log_error "Please run this script from the kovin-app directory:"
-    log_error "  cd ~/kovin-app && sudo ./install.sh"
-    exit 1
+    err "Run from kovin-meet-platform directory"
 fi
 
-# ============================================================================
-# CREATE LIVEKIT CONFIGURATION
-# ============================================================================
+# Set ownership
+chown -R "$APP_USER:$APP_USER" "$DIR"
 
-log_info "Creating LiveKit configuration..."
+# =============================================================================
+# SSL CERTIFICATE
+# =============================================================================
 
-cat > $INSTALL_DIR/config/livekit.yaml << EOF
-port: 7880
-rtc:
-  port_range_start: 50000
-  port_range_end: 60000
-  tcp_port: 7881
-  use_external_ip: true
-  enable_loopback_candidate: false
+log "Setting up SSL..."
+CERT_DIR="$DIR/certs/live/$DOMAIN"
+mkdir -p "$CERT_DIR"
 
-redis:
-  address: redis:6379
-  password: ${REDIS_PASSWORD}
+# Check for existing cert
+if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+    cp -L /etc/letsencrypt/live/$DOMAIN/*.pem "$CERT_DIR/"
+    ok "Using existing Let's Encrypt cert"
+else
+    # Try to get Let's Encrypt cert
+    apt-get install -y -qq certbot
+    if certbot certonly --standalone --non-interactive --agree-tos -m "$EMAIL" -d "$DOMAIN" 2>/dev/null; then
+        cp -L /etc/letsencrypt/live/$DOMAIN/*.pem "$CERT_DIR/"
+        ok "Got Let's Encrypt cert"
+    else
+        warn "Creating self-signed cert (browser will show warning)"
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout "$CERT_DIR/privkey.pem" \
+            -out "$CERT_DIR/fullchain.pem" \
+            -subj "/CN=$DOMAIN" 2>/dev/null
+    fi
+fi
 
-turn:
-  enabled: true
-  domain: ${DOMAIN}
-  tls_port: 5349
-  udp_port: 3478
-  external_tls: true
+# =============================================================================
+# DOCKER COMPOSE
+# =============================================================================
 
-keys:
-  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
-
-logging:
-  level: info
-  json: true
-
-room:
-  enabled_codecs:
-    - mime: audio/opus
-    - mime: video/VP8
-    - mime: video/H264
-  max_participants: 100
-  empty_timeout: 300
-  departure_timeout: 20
-
-webhook:
-  urls:
-    - https://${DOMAIN}/api/webhooks/livekit
-  api_key: ${LIVEKIT_API_KEY}
-EOF
-
-# ============================================================================
-# CREATE COTURN CONFIGURATION
-# ============================================================================
-
-log_info "Creating Coturn configuration..."
-
-cat > $INSTALL_DIR/config/turnserver.conf << EOF
-# Coturn TURN Server Configuration
-listening-port=3478
-tls-listening-port=5349
-listening-ip=0.0.0.0
-external-ip=${SERVER_IP}
-relay-ip=0.0.0.0
-min-port=49152
-max-port=65535
-
-# Authentication
-use-auth-secret
-static-auth-secret=${TURN_SECRET}
-realm=${DOMAIN}
-
-# Logging
-log-file=/var/log/turnserver.log
-verbose
-
-# Performance
-total-quota=100
-bps-capacity=0
-stale-nonce=600
-no-multicast-peers
-
-# Security
-no-cli
-fingerprint
-lt-cred-mech
-
-# SSL
-cert=/etc/letsencrypt/live/${DOMAIN}/fullchain.pem
-pkey=/etc/letsencrypt/live/${DOMAIN}/privkey.pem
-EOF
-
-# ============================================================================
-# CREATE NGINX CONFIGURATION
-# ============================================================================
-
-log_info "Creating Nginx configuration..."
-
-cat > $INSTALL_DIR/config/nginx.conf << 'NGINX_EOF'
-user nginx;
-worker_processes auto;
-error_log /var/log/nginx/error.log warn;
-pid /var/run/nginx.pid;
-
-events {
-    worker_connections 4096;
-    use epoll;
-    multi_accept on;
-}
-
-http {
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-
-    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
-                    '$status $body_bytes_sent "$http_referer" '
-                    '"$http_user_agent" "$http_x_forwarded_for"';
-
-    access_log /var/log/nginx/access.log main;
-
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
-    client_max_body_size 100M;
-
-    # Gzip compression
-    gzip on;
-    gzip_vary on;
-    gzip_proxied any;
-    gzip_comp_level 6;
-    gzip_types text/plain text/css text/xml application/json application/javascript application/rss+xml application/atom+xml image/svg+xml;
-
-    # Rate limiting
-    limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
-    limit_conn_zone $binary_remote_addr zone=conn:10m;
-
-    # Upstream definitions
-    # Using 127.0.0.1 because services run with network_mode: host
-    upstream nextjs {
-        server 127.0.0.1:3000;
-        keepalive 32;
-    }
-
-    upstream livekit {
-        server 127.0.0.1:7880;
-        keepalive 32;
-    }
-
-    upstream minio {
-        server 127.0.0.1:9000;
-        keepalive 32;
-    }
-
-    # HTTP redirect to HTTPS
-    server {
-        listen 80;
-        listen [::]:80;
-        server_name DOMAIN_PLACEHOLDER;
-        
-        location /.well-known/acme-challenge/ {
-            root /var/www/certbot;
-        }
-
-        location / {
-            return 301 https://$host$request_uri;
-        }
-    }
-
-    # Main HTTPS server
-    server {
-        listen 443 ssl http2;
-        listen [::]:443 ssl http2;
-        server_name DOMAIN_PLACEHOLDER;
-
-        ssl_certificate /etc/letsencrypt/live/DOMAIN_PLACEHOLDER/fullchain.pem;
-        ssl_certificate_key /etc/letsencrypt/live/DOMAIN_PLACEHOLDER/privkey.pem;
-        ssl_session_timeout 1d;
-        ssl_session_cache shared:SSL:50m;
-        ssl_session_tickets off;
-
-        ssl_protocols TLSv1.2 TLSv1.3;
-        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
-        ssl_prefer_server_ciphers off;
-
-        add_header Strict-Transport-Security "max-age=63072000" always;
-        add_header X-Frame-Options DENY;
-        add_header X-Content-Type-Options nosniff;
-        add_header X-XSS-Protection "1; mode=block";
-
-        # Next.js application
-        location / {
-            proxy_pass http://nextjs;
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection 'upgrade';
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_cache_bypass $http_upgrade;
-            proxy_read_timeout 86400;
-        }
-
-        # LiveKit WebSocket
-        location /rtc {
-            proxy_pass http://livekit;
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "upgrade";
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_read_timeout 86400;
-            proxy_send_timeout 86400;
-        }
-
-        # LiveKit API
-        location /twirp {
-            proxy_pass http://livekit;
-            proxy_http_version 1.1;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-
-        # MinIO storage
-        location /storage/ {
-            rewrite ^/storage/(.*) /$1 break;
-            proxy_pass http://minio;
-            proxy_http_version 1.1;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            client_max_body_size 1G;
-        }
-
-        # API rate limiting
-        location /api/ {
-            limit_req zone=api burst=20 nodelay;
-            proxy_pass http://nextjs;
-            proxy_http_version 1.1;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-    }
-}
-NGINX_EOF
-
-# Replace domain placeholder
-sed -i "s/DOMAIN_PLACEHOLDER/${DOMAIN}/g" $INSTALL_DIR/config/nginx.conf
-
-# ============================================================================
-# CREATE DOCKER COMPOSE FILE
-# ============================================================================
-
-log_info "Creating Docker Compose configuration..."
-
-cat > $INSTALL_DIR/docker-compose.yml << EOF
-version: '3.8'
-
+log "Creating Docker Compose..."
+cat > "$DIR/docker-compose.yml" << EOF
 services:
-  # PostgreSQL Database
   postgres:
     image: postgres:16-alpine
     container_name: kovin-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: kovin
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: $PG_PASS
       POSTGRES_DB: kovin_meet
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kovin -d kovin_meet"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U kovin"]
+      interval: 5s
       timeout: 5s
       retries: 5
-    networks:
-      - kovin-network
 
-  # Redis Cache
   redis:
     image: redis:7-alpine
     container_name: kovin-redis
     restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    command: redis-server --requirepass $REDIS_PASS
     volumes:
       - ./data/redis:/data
+    ports:
+      - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
-      interval: 10s
+      test: ["CMD", "redis-cli", "-a", "$REDIS_PASS", "ping"]
+      interval: 5s
       timeout: 5s
       retries: 5
-    networks:
-      - kovin-network
 
-  # MinIO Object Storage
   minio:
     image: minio/minio:latest
     container_name: kovin-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER: $MINIO_USER
+      MINIO_ROOT_PASSWORD: $MINIO_PASS
     volumes:
       - ./data/minio:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
-    networks:
-      - kovin-network
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
 
-  # LiveKit Server
-  # Uses host network mode for optimal WebRTC performance
   livekit:
     image: livekit/livekit-server:latest
     container_name: kovin-livekit
     restart: unless-stopped
     network_mode: host
     command: --config /etc/livekit.yaml
-    environment:
-      LIVEKIT_KEYS: "\${LIVEKIT_API_KEY}:\${LIVEKIT_API_SECRET}"
     volumes:
       - ./config/livekit.yaml:/etc/livekit.yaml:ro
     depends_on:
       redis:
         condition: service_healthy
 
-  # Coturn TURN Server
-  # Uses host network mode for optimal WebRTC NAT traversal
-  coturn:
-    image: coturn/coturn:latest
-    container_name: kovin-coturn
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - ./config/turnserver.conf:/etc/coturn/turnserver.conf:ro
-      - ./certs:/etc/letsencrypt:ro
-
-  # Next.js Application
-  app:
-    image: node:20-alpine
-    container_name: kovin-app
-    restart: unless-stopped
-    working_dir: /app
-    command: sh -c "npm install && npm run build && npm start"
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://kovin:${POSTGRES_PASSWORD}@postgres:5432/kovin_meet
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-      NEXTAUTH_URL: https://${DOMAIN}
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
-      LIVEKIT_URL: wss://${DOMAIN}
-      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
-      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
-      MINIO_ENDPOINT: minio
-      MINIO_PORT: 9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      MINIO_BUCKET: kovin-recordings
-      STORAGE_URL: https://${DOMAIN}/storage
-    volumes:
-      - ./app:/app
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - kovin-network
-
-  # Nginx Reverse Proxy
-  # Uses host network mode to reach other host-networked services (livekit, app)
   nginx:
     image: nginx:alpine
     container_name: kovin-nginx
     restart: unless-stopped
-    network_mode: host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./certs:/etc/letsencrypt:ro
-      - ./certbot-webroot:/var/www/certbot:ro
-    depends_on:
-      - app
-      - livekit
-      - minio
-
-  # Certbot for SSL
-  certbot:
-    image: certbot/certbot
-    container_name: kovin-certbot
-    volumes:
-      - ./certs:/etc/letsencrypt
-      - ./certbot-webroot:/var/www/certbot
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait \$\${!}; done;'"
-    networks:
-      - kovin-network
-
-networks:
-  kovin-network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
+    ports:
+      - "80:80"
+      - "443:443"
 EOF
 
-# ============================================================================
-# CREATE ENVIRONMENT FILE
-# ============================================================================
+# =============================================================================
+# LIVEKIT CONFIG
+# =============================================================================
 
-log_info "Creating environment file..."
-
-cat > $INSTALL_DIR/.env << EOF
-# KOVIN Meet Environment Configuration
-# Generated on $(date)
-
-# Domain
-DOMAIN=${DOMAIN}
-SERVER_IP=${SERVER_IP}
-
-# PostgreSQL
-POSTGRES_USER=kovin
-POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-POSTGRES_DB=kovin_meet
-DATABASE_URL=postgresql://kovin:${POSTGRES_PASSWORD}@postgres:5432/kovin_meet
-
-# Redis
-REDIS_PASSWORD=${REDIS_PASSWORD}
-REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
-
-# MinIO
-MINIO_ROOT_USER=${MINIO_ROOT_USER}
-MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-MINIO_ENDPOINT=minio
-MINIO_PORT=9000
-MINIO_BUCKET=kovin-recordings
-
-# LiveKit
-LIVEKIT_URL=wss://${DOMAIN}
-LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
-LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
-
-# Coturn
-TURN_SECRET=${TURN_SECRET}
-
-# NextAuth
-NEXTAUTH_URL=https://${DOMAIN}
-NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
-
-# Storage
-STORAGE_URL=https://${DOMAIN}/storage
+log "Creating LiveKit config..."
+cat > "$DIR/config/livekit.yaml" << EOF
+port: 7880
+rtc:
+  port_range_start: 50000
+  port_range_end: 50100
+  tcp_port: 7881
+  use_external_ip: true
+redis:
+  address: 127.0.0.1:6379
+  password: $REDIS_PASS
+keys:
+  $LK_KEY: $LK_SECRET
+turn:
+  enabled: true
+  domain: $DOMAIN
+  tls_port: 5349
+  udp_port: 3478
 EOF
 
-chmod 600 $INSTALL_DIR/.env
+# =============================================================================
+# NGINX CONFIG
+# =============================================================================
 
-# ============================================================================
-# CONFIGURE FIREWALL
-# ============================================================================
+log "Creating Nginx config..."
+cat > "$DIR/config/nginx.conf" << EOF
+events { worker_connections 4096; }
 
-log_info "Configuring firewall..."
-
-ufw --force reset
-ufw default deny incoming
-ufw default allow outgoing
-
-# Essential ports
-ufw allow 22/tcp comment 'SSH'
-ufw allow 80/tcp comment 'HTTP'
-ufw allow 443/tcp comment 'HTTPS'
-
-# LiveKit ports
-ufw allow 7881/tcp comment 'LiveKit TCP'
-ufw allow 50000:60000/udp comment 'LiveKit RTC'
-
-# TURN server ports
-ufw allow 3478/tcp comment 'TURN TCP'
-ufw allow 3478/udp comment 'TURN UDP'
-ufw allow 5349/tcp comment 'TURN TLS'
-ufw allow 5349/udp comment 'TURN DTLS'
-ufw allow 49152:65535/udp comment 'TURN relay'
-
-ufw --force enable
-
-log_success "Firewall configured"
-
-# ============================================================================
-# OBTAIN SSL CERTIFICATES
-# ============================================================================
-
-log_info "Obtaining SSL certificates..."
-
-# Check if valid certificates already exist (from previous installation or backup)
-if [ -f "$INSTALL_DIR/certs/live/$DOMAIN/fullchain.pem" ] && [ -f "$INSTALL_DIR/certs/live/$DOMAIN/privkey.pem" ]; then
-    # Check if cert is still valid (not expired)
-    if openssl x509 -checkend 86400 -noout -in "$INSTALL_DIR/certs/live/$DOMAIN/fullchain.pem" 2>/dev/null; then
-        log_success "Valid SSL certificates already exist, skipping certificate request"
-        SKIP_CERTBOT=true
-    else
-        log_warning "Existing certificate is expired or invalid, requesting new one..."
-        SKIP_CERTBOT=false
-    fi
-else
-    # Also check system certbot location
-    if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/$DOMAIN/privkey.pem" ]; then
-        log_info "Found certificates in /etc/letsencrypt, copying..."
-        mkdir -p "$INSTALL_DIR/certs"
-        cp -rL /etc/letsencrypt/* "$INSTALL_DIR/certs/" 2>/dev/null || true
-        if [ -f "$INSTALL_DIR/certs/live/$DOMAIN/fullchain.pem" ]; then
-            log_success "Certificates copied successfully"
-            SKIP_CERTBOT=true
-        else
-            SKIP_CERTBOT=false
-        fi
-    else
-        SKIP_CERTBOT=false
-    fi
-fi
-
-if [ "$SKIP_CERTBOT" = "false" ]; then
-# Check if port 80 is in use and stop conflicting services
-log_info "Checking for services using port 80..."
-PORT80_PID=$(lsof -t -i:80 2>/dev/null || true)
-if [ -n "$PORT80_PID" ]; then
-    log_warning "Port 80 is in use. Stopping conflicting services..."
+http {
+    include /etc/nginx/mime.types;
     
-    # Try to stop common web servers
-    systemctl stop apache2 2>/dev/null || true
-    systemctl stop nginx 2>/dev/null || true
-    systemctl stop httpd 2>/dev/null || true
-    systemctl stop lighttpd 2>/dev/null || true
-    
-    # Wait a moment
-    sleep 2
-    
-    # Check again
-    PORT80_PID=$(lsof -t -i:80 2>/dev/null || true)
-    if [ -n "$PORT80_PID" ]; then
-        log_warning "Still have processes on port 80. Attempting to kill..."
-        kill -9 $PORT80_PID 2>/dev/null || true
-        sleep 2
-    fi
-fi
-
-# Also check port 443
-PORT443_PID=$(lsof -t -i:443 2>/dev/null || true)
-if [ -n "$PORT443_PID" ]; then
-    log_warning "Port 443 is in use. Stopping conflicting services..."
-    kill -9 $PORT443_PID 2>/dev/null || true
-    sleep 2
-fi
-
-# Disable common web servers from auto-starting
-systemctl disable apache2 2>/dev/null || true
-systemctl disable nginx 2>/dev/null || true
-systemctl disable httpd 2>/dev/null || true
-
-# Create certbot webroot and config directory
-mkdir -p $INSTALL_DIR/certbot-webroot
-mkdir -p $INSTALL_DIR/config
-
-# IMPORTANT: Clean up if nginx-certbot.conf was incorrectly created as a directory
-# (this can happen from failed previous runs where Docker creates it as a dir)
-if [ -d "$INSTALL_DIR/config/nginx-certbot.conf" ]; then
-    log_warning "Removing incorrectly created directory: $INSTALL_DIR/config/nginx-certbot.conf"
-    rm -rf "$INSTALL_DIR/config/nginx-certbot.conf"
-fi
-
-# Also remove if it exists as a file to ensure fresh creation
-rm -f "$INSTALL_DIR/config/nginx-certbot.conf" 2>/dev/null || true
-
-# Create simple nginx config for certbot FIRST (before docker run)
-cat > $INSTALL_DIR/config/nginx-certbot.conf << 'CERTBOT_NGINX'
-server {
-    listen 80;
-    server_name _;
-    
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
+    server {
+        listen 80;
+        server_name $DOMAIN;
+        return 301 https://\$host\$request_uri;
     }
-    
-    location / {
-        return 200 'KOVIN Meet - SSL Setup in Progress';
-        add_header Content-Type text/plain;
+
+    server {
+        listen 443 ssl http2;
+        server_name $DOMAIN;
+
+        ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        
+        client_max_body_size 100M;
+
+        location / {
+            proxy_pass http://host.docker.internal:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_read_timeout 86400;
+        }
+
+        location /rtc {
+            proxy_pass http://host.docker.internal:7880;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host \$host;
+            proxy_read_timeout 86400;
+        }
+
+        location /storage/ {
+            proxy_pass http://host.docker.internal:9000/;
+            proxy_set_header Host \$host;
+        }
     }
 }
-CERTBOT_NGINX
+EOF
 
-# Remove any existing temp-nginx container
-docker stop temp-nginx 2>/dev/null || true
-docker rm temp-nginx 2>/dev/null || true
+# =============================================================================
+# APP ENV FILE
+# =============================================================================
 
-# Start nginx temporarily for ACME challenge
-log_info "Starting temporary nginx for SSL certificate verification..."
-docker run -d --name temp-nginx -p 80:80 \
-    -v $INSTALL_DIR/certbot-webroot:/var/www/certbot \
-    -v $INSTALL_DIR/config/nginx-certbot.conf:/etc/nginx/conf.d/default.conf \
-    nginx:alpine
+log "Creating environment file..."
+cat > "$DIR/app/.env" << EOF
+DATABASE_URL=postgresql://kovin:$PG_PASS@localhost:5432/kovin_meet
+REDIS_URL=redis://:$REDIS_PASS@localhost:6379
+NEXTAUTH_URL=https://$DOMAIN
+NEXTAUTH_SECRET=$AUTH_SECRET
+LIVEKIT_URL=wss://$DOMAIN
+LIVEKIT_API_KEY=$LK_KEY
+LIVEKIT_API_SECRET=$LK_SECRET
+MINIO_ENDPOINT=localhost
+MINIO_PORT=9000
+MINIO_ACCESS_KEY=$MINIO_USER
+MINIO_SECRET_KEY=$MINIO_PASS
+EOF
 
-if [ $? -ne 0 ]; then
-    log_error "Failed to start temporary nginx. Port 80 may still be in use."
-    log_error "Please manually stop the service using port 80 and run the installer again."
-    log_error "Run: sudo lsof -i:80    to find the process"
-    log_error "Run: sudo kill -9 <PID> to stop it"
-    exit 1
-fi
+# =============================================================================
+# FIREWALL
+# =============================================================================
 
-sleep 5
+log "Configuring firewall..."
+ufw --force reset >/dev/null 2>&1
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw allow 3478/udp
+ufw allow 5349/tcp
+ufw allow 7880/tcp
+ufw allow 7881/tcp
+ufw allow 50000:50100/udp
+ufw --force enable >/dev/null 2>&1
+ok "Firewall configured"
 
-# Obtain certificate
-log_info "Requesting SSL certificate from Let's Encrypt..."
-docker run --rm \
-    -v $INSTALL_DIR/certs:/etc/letsencrypt \
-    -v $INSTALL_DIR/certbot-webroot:/var/www/certbot \
-    certbot/certbot certonly \
-    --webroot \
-    --webroot-path=/var/www/certbot \
-    --email $SSL_EMAIL \
-    --agree-tos \
-    --no-eff-email \
-    --non-interactive \
-    --keep-until-expiring \
-    -d $DOMAIN
+# =============================================================================
+# START INFRASTRUCTURE
+# =============================================================================
 
-CERT_RESULT=$?
+log "Starting infrastructure..."
+cd "$DIR"
+docker compose up -d
 
-# Stop temporary nginx
-docker stop temp-nginx 2>/dev/null || true
-docker rm temp-nginx 2>/dev/null || true
+log "Waiting for PostgreSQL..."
+until docker exec kovin-postgres pg_isready -U kovin >/dev/null 2>&1; do sleep 2; done
+ok "PostgreSQL ready"
 
-if [ $CERT_RESULT -ne 0 ]; then
-    # Check if cert already exists (exit code 1 but cert is valid)
-    if [ -f "$INSTALL_DIR/certs/live/$DOMAIN/fullchain.pem" ]; then
-        log_warning "Certificate already exists and is valid, continuing..."
-    else
-        log_error "Failed to obtain SSL certificate. Please check:"
-        log_error "1. Your domain ($DOMAIN) points to this server's IP ($SERVER_IP)"
-        log_error "2. Port 80 is accessible from the internet"
-        log_error "3. Your DNS records are properly configured"
-        exit 1
-    fi
-else
-    log_success "SSL certificates obtained"
-fi
+# =============================================================================
+# BUILD AND START APP
+# =============================================================================
 
-fi  # End of SKIP_CERTBOT check
+log "Installing dependencies (this takes a minute)..."
+cd "$DIR/app"
+npm install --legacy-peer-deps 2>&1 | tail -3
 
-# ============================================================================
-# CREATE SYSTEMD SERVICE
-# ============================================================================
+log "Setting up database..."
+npx prisma generate 2>&1 | tail -2
+npx prisma db push --accept-data-loss 2>&1 | tail -3
+ok "Database ready"
 
-log_info "Creating systemd service..."
+log "Creating superadmin..."
+cat > /tmp/seed.js << 'SEED'
+const { PrismaClient } = require("@prisma/client");
+const bcrypt = require("bcryptjs");
+const prisma = new PrismaClient();
+
+async function main() {
+  const email = process.env.ADMIN_EMAIL;
+  const pass = process.env.ADMIN_PASS;
+  const hash = await bcrypt.hash(pass, 12);
+  
+  await prisma.user.upsert({
+    where: { email },
+    update: { passwordHash: hash, isSuperAdmin: true, isActive: true },
+    create: {
+      email,
+      passwordHash: hash,
+      firstName: "Super",
+      lastName: "Admin", 
+      isSuperAdmin: true,
+      isActive: true
+    }
+  });
+  console.log("Superadmin ready:", email);
+}
+main().finally(() => prisma.$disconnect());
+SEED
+
+ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASS="$ADMIN_PASS" node /tmp/seed.js
+rm /tmp/seed.js
+
+log "Building app (this takes 2-3 minutes)..."
+npm run build 2>&1 | tail -5
+ok "Build complete"
+
+log "Starting app with PM2..."
+pm2 delete kovin-app 2>/dev/null || true
+cd "$DIR/app"
+pm2 start npm --name "kovin-app" -- start
+pm2 save
+env PATH=$PATH:/usr/bin pm2 startup systemd -u "$APP_USER" --hp "/home/$APP_USER" 2>/dev/null || true
+ok "App started"
+
+# =============================================================================
+# MANAGEMENT SCRIPTS
+# =============================================================================
+
+cat > "$DIR/start.sh" << 'EOF'
+#!/bin/bash
+cd /opt/kovin-meet && docker compose up -d && pm2 start kovin-app
+EOF
+
+cat > "$DIR/stop.sh" << 'EOF'
+#!/bin/bash
+pm2 stop kovin-app && cd /opt/kovin-meet && docker compose down
+EOF
+
+cat > "$DIR/restart.sh" << 'EOF'
+#!/bin/bash
+pm2 restart kovin-app && cd /opt/kovin-meet && docker compose restart
+EOF
+
+cat > "$DIR/logs.sh" << 'EOF'
+#!/bin/bash
+pm2 logs kovin-app --lines 100
+EOF
+
+cat > "$DIR/status.sh" << 'EOF'
+#!/bin/bash
+echo "=== Containers ===" && docker ps --format "table {{.Names}}\t{{.Status}}"
+echo "" && echo "=== App ===" && pm2 status
+EOF
+
+chmod +x "$DIR"/*.sh
+
+# =============================================================================
+# SYSTEMD SERVICE
+# =============================================================================
 
 cat > /etc/systemd/system/kovin-meet.service << EOF
 [Unit]
-Description=KOVIN Meet Platform
-Requires=docker.service
+Description=KOVIN Meet
 After=docker.service
+Requires=docker.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=${INSTALL_DIR}
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
-TimeoutStartSec=0
+ExecStart=$DIR/start.sh
+ExecStop=$DIR/stop.sh
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable kovin-meet.service
+systemctl enable kovin-meet
 
-# ============================================================================
-# CREATE MANAGEMENT SCRIPTS
-# ============================================================================
+# =============================================================================
+# SAVE CREDENTIALS
+# =============================================================================
 
-log_info "Creating management scripts..."
+cat > "$DIR/CREDENTIALS.txt" << EOF
+========================================
+  KOVIN Meet Credentials
+========================================
 
-# Start script
-cat > $INSTALL_DIR/start.sh << 'EOF'
-#!/bin/bash
-cd /opt/kovin-meet
-docker compose up -d
-echo "KOVIN Meet started"
-EOF
-chmod +x $INSTALL_DIR/start.sh
+URL: https://$DOMAIN
 
-# Stop script
-cat > $INSTALL_DIR/stop.sh << 'EOF'
-#!/bin/bash
-cd /opt/kovin-meet
-docker compose down
-echo "KOVIN Meet stopped"
-EOF
-chmod +x $INSTALL_DIR/stop.sh
+SUPERADMIN LOGIN:
+  URL:      https://$DOMAIN/superadmin/login
+  Email:    $ADMIN_EMAIL
+  Password: $ADMIN_PASS
 
-# Restart script
-cat > $INSTALL_DIR/restart.sh << 'EOF'
-#!/bin/bash
-cd /opt/kovin-meet
-docker compose down
-docker compose up -d
-echo "KOVIN Meet restarted"
-EOF
-chmod +x $INSTALL_DIR/restart.sh
-
-# Logs script
-cat > $INSTALL_DIR/logs.sh << 'EOF'
-#!/bin/bash
-cd /opt/kovin-meet
-docker compose logs -f
-EOF
-chmod +x $INSTALL_DIR/logs.sh
-
-# Backup script
-cat > $INSTALL_DIR/backup.sh << 'EOF'
-#!/bin/bash
-BACKUP_DIR="/opt/kovin-meet/backups"
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-mkdir -p $BACKUP_DIR
-
-echo "Starting backup..."
-
-# Backup PostgreSQL
-docker exec kovin-postgres pg_dump -U kovin kovin_meet > $BACKUP_DIR/postgres_$TIMESTAMP.sql
-
-# Backup configuration
-tar -czf $BACKUP_DIR/config_$TIMESTAMP.tar.gz -C /opt/kovin-meet config .env
-
-# Backup MinIO data
-tar -czf $BACKUP_DIR/minio_$TIMESTAMP.tar.gz -C /opt/kovin-meet/data minio
-
-echo "Backup completed: $BACKUP_DIR"
-
-# Keep only last 7 backups
-cd $BACKUP_DIR
-ls -t postgres_*.sql | tail -n +8 | xargs -r rm
-ls -t config_*.tar.gz | tail -n +8 | xargs -r rm
-ls -t minio_*.tar.gz | tail -n +8 | xargs -r rm
-EOF
-chmod +x $INSTALL_DIR/backup.sh
-
-# Update script
-cat > $INSTALL_DIR/update.sh << 'EOF'
-#!/bin/bash
-cd /opt/kovin-meet
-
-echo "Pulling latest images..."
-docker compose pull
-
-echo "Restarting services..."
-docker compose up -d
-
-echo "Cleaning up old images..."
-docker image prune -f
-
-echo "Update complete"
-EOF
-chmod +x $INSTALL_DIR/update.sh
-
-# ============================================================================
-# CREATE CRON JOBS
-# ============================================================================
-
-log_info "Setting up cron jobs..."
-
-# SSL renewal
-(crontab -l 2>/dev/null; echo "0 3 * * * cd /opt/kovin-meet && docker compose exec certbot certbot renew --quiet") | crontab -
-
-# Daily backup
-(crontab -l 2>/dev/null; echo "0 2 * * * /opt/kovin-meet/backup.sh >> /opt/kovin-meet/logs/backup.log 2>&1") | crontab -
-
-# ============================================================================
-# START SERVICES
-# ============================================================================
-
-log_info "Starting KOVIN Meet services..."
-
-cd $INSTALL_DIR
-docker compose up -d
-
-# Wait for services to be ready
-log_info "Waiting for services to be ready..."
-sleep 30
-
-# ============================================================================
-# INITIALIZE DATABASE
-# ============================================================================
-
-log_info "Initializing database..."
-
-# Wait for PostgreSQL to be ready
-log_info "Waiting for PostgreSQL..."
-until docker exec kovin-postgres pg_isready -U kovin -d kovin_meet > /dev/null 2>&1; do
-    sleep 2
-done
-
-# Install Node.js dependencies and build the app
-log_info "Building application (this may take a few minutes)..."
-cd $INSTALL_DIR/app
-
-# Install Node.js if not present
-if ! command -v node &> /dev/null; then
-    log_info "Installing Node.js..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-    apt-get install -y nodejs
-fi
-
-# Install dependencies and build
-npm install --legacy-peer-deps
-npx prisma generate
-npx prisma db push --accept-data-loss
-
-# Create superadmin user
-log_info "Creating superadmin user..."
-cat > $INSTALL_DIR/app/scripts/create-superadmin.ts << 'SEEDEOF'
-import { PrismaClient } from "@prisma/client"
-import bcrypt from "bcryptjs"
-
-const prisma = new PrismaClient()
-
-async function main() {
-  const email = process.env.SUPERADMIN_EMAIL || "admin@localhost"
-  const password = process.env.SUPERADMIN_PASSWORD || "Admin123!"
-  
-  const hashedPassword = await bcrypt.hash(password, 12)
-  
-  // Check if user exists
-  const existing = await prisma.user.findFirst({
-    where: { email }
-  })
-  
-  if (existing) {
-    await prisma.user.update({
-      where: { id: existing.id },
-      data: {
-        passwordHash: hashedPassword,
-        isSuperAdmin: true,
-        isActive: true,
-      },
-    })
-    console.log("Superadmin updated:", email)
-  } else {
-    await prisma.user.create({
-      data: {
-        email,
-        passwordHash: hashedPassword,
-        firstName: "Super",
-        lastName: "Admin",
-        isSuperAdmin: true,
-        isActive: true,
-      },
-    })
-    console.log("Superadmin created:", email)
-  }
-}
-
-main()
-  .catch(console.error)
-  .finally(() => prisma.$disconnect())
-SEEDEOF
-
-SUPERADMIN_EMAIL="$SUPERADMIN_EMAIL" SUPERADMIN_PASSWORD="$SUPERADMIN_PASSWORD" npx tsx $INSTALL_DIR/app/scripts/create-superadmin.ts
-
-# Build the Next.js app
-log_info "Building Next.js application..."
-npm run build
-
-# Start the app with PM2 or directly
-log_info "Starting application..."
-npm install -g pm2 2>/dev/null || true
-pm2 delete kovin-app 2>/dev/null || true
-pm2 start npm --name "kovin-app" -- start
-pm2 save
-pm2 startup systemd -u root --hp /root 2>/dev/null || true
-
-# ============================================================================
-# PRINT SUMMARY
-# ============================================================================
-
-echo ""
-echo "============================================"
-echo "  KOVIN Meet Installation Complete!        "
-echo "============================================"
-echo ""
-# Clean up temporary cert backup
-rm -rf /tmp/kovin-certs-backup 2>/dev/null || true
-
-log_success "Installation completed successfully!"
-echo ""
-echo "Your KOVIN Meet platform is now available at:"
-echo "  https://${DOMAIN}"
-echo ""
-echo "============================================"
-echo "  IMPORTANT CREDENTIALS (SAVE THESE!)      "
-echo "============================================"
-echo ""
-echo "PostgreSQL:"
-echo "  User: kovin"
-echo "  Password: ${POSTGRES_PASSWORD}"
-echo "  Database: kovin_meet"
-echo ""
-echo "Redis Password: ${REDIS_PASSWORD}"
-echo ""
-echo "MinIO:"
-echo "  Access Key: ${MINIO_ROOT_USER}"
-echo "  Secret Key: ${MINIO_ROOT_PASSWORD}"
-echo "  Console: https://${DOMAIN}:9001"
-echo ""
-echo "LiveKit:"
-echo "  API Key: ${LIVEKIT_API_KEY}"
-echo "  API Secret: ${LIVEKIT_API_SECRET}"
-echo ""
-echo "NextAuth Secret: ${NEXTAUTH_SECRET}"
-echo ""
-echo "TURN Secret: ${TURN_SECRET}"
-echo ""
-echo "============================================"
-echo "  MANAGEMENT COMMANDS                      "
-echo "============================================"
-echo ""
-echo "Start:    ${INSTALL_DIR}/start.sh"
-echo "Stop:     ${INSTALL_DIR}/stop.sh"
-echo "Restart:  ${INSTALL_DIR}/restart.sh"
-echo "Logs:     ${INSTALL_DIR}/logs.sh"
-echo "Backup:   ${INSTALL_DIR}/backup.sh"
-echo "Update:   ${INSTALL_DIR}/update.sh"
-echo ""
-echo "SystemD:  systemctl [start|stop|restart] kovin-meet"
-echo ""
-echo "============================================"
-echo "  SUPERADMIN LOGIN                         "
-echo "============================================"
-echo ""
-echo "Login URL: https://${DOMAIN}/superadmin/login"
-echo "Email:     ${SUPERADMIN_EMAIL}"
-echo "Password:  ${SUPERADMIN_PASSWORD}"
-echo ""
-echo "============================================"
-echo "  NEXT STEPS                               "
-echo "============================================"
-echo ""
-echo "1. Open https://${DOMAIN}/superadmin/login"
-echo "2. Login with the superadmin credentials above"
-echo "3. Create tenants and users from the admin panel"
-echo "4. Configure your DNS to point to: ${SERVER_IP}"
-echo ""
-echo "For support, visit: https://github.com/a11y444/kovin-meet-platform"
-echo ""
-
-# Save credentials to file
-cat > $INSTALL_DIR/credentials.txt << EOF
-KOVIN Meet Credentials
-Generated: $(date)
-
-Domain: ${DOMAIN}
-Server IP: ${SERVER_IP}
-
-PostgreSQL:
-  User: kovin
-  Password: ${POSTGRES_PASSWORD}
+DATABASE:
+  Host:     localhost:5432
+  User:     kovin
+  Password: $PG_PASS
   Database: kovin_meet
 
-Redis Password: ${REDIS_PASSWORD}
+REDIS:
+  Host:     localhost:6379
+  Password: $REDIS_PASS
 
-MinIO:
-  Access Key: ${MINIO_ROOT_USER}
-  Secret Key: ${MINIO_ROOT_PASSWORD}
+MINIO:
+  Console:  http://localhost:9001
+  User:     $MINIO_USER
+  Password: $MINIO_PASS
 
-LiveKit:
-  API Key: ${LIVEKIT_API_KEY}
-  API Secret: ${LIVEKIT_API_SECRET}
+LIVEKIT:
+  API Key:    $LK_KEY
+  API Secret: $LK_SECRET
 
-NextAuth Secret: ${NEXTAUTH_SECRET}
-TURN Secret: ${TURN_SECRET}
+COMMANDS:
+  Status:  $DIR/status.sh
+  Logs:    $DIR/logs.sh
+  Restart: $DIR/restart.sh
 
-Superadmin:
-  Login URL: https://${DOMAIN}/superadmin/login
-  Email: ${SUPERADMIN_EMAIL}
-  Password: ${SUPERADMIN_PASSWORD}
+========================================
+  DELETE THIS FILE AFTER SAVING!
+========================================
 EOF
 
-chmod 600 $INSTALL_DIR/credentials.txt
-log_warning "Credentials saved to: ${INSTALL_DIR}/credentials.txt"
-log_warning "Please store these credentials securely and delete this file!"
+chown "$APP_USER:$APP_USER" "$DIR/CREDENTIALS.txt"
+chmod 600 "$DIR/CREDENTIALS.txt"
+
+# =============================================================================
+# DONE
+# =============================================================================
+
+echo ""
+echo "========================================"
+echo "     Installation Complete!"
+echo "========================================"
+echo ""
+echo "URL: https://$DOMAIN"
+echo ""
+echo "Superadmin Login:"
+echo "  https://$DOMAIN/superadmin/login"
+echo "  Email:    $ADMIN_EMAIL"
+echo "  Password: $ADMIN_PASS"
+echo ""
+echo "Credentials saved to: $DIR/CREDENTIALS.txt"
+echo ""
+echo "Commands:"
+echo "  $DIR/status.sh  - Check status"
+echo "  $DIR/logs.sh    - View logs"
+echo "  $DIR/restart.sh - Restart"
+echo ""
+ok "Done! Open https://$DOMAIN"
