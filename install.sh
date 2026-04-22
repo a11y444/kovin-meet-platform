@@ -70,12 +70,25 @@ MINIO_USER="kovin"
 MINIO_PASS=$(openssl rand -hex 16)
 
 SERVER_IP=$(curl -s -4 ifconfig.me 2>/dev/null || curl -s icanhazip.com)
-DIR="/opt/kovin-meet"
+APP_USER="kovin"
+DIR="/home/$APP_USER/kovin-meet"
 
 echo ""
 log "Domain: $DOMAIN"
 log "Server IP: $SERVER_IP"
 echo ""
+
+# =============================================================================
+# CREATE USER
+# =============================================================================
+
+if id "$APP_USER" &>/dev/null; then
+    log "User $APP_USER exists"
+else
+    log "Creating user $APP_USER..."
+    useradd -m -s /bin/bash "$APP_USER"
+    ok "User created"
+fi
 
 # =============================================================================
 # SYSTEM UPDATE
@@ -132,6 +145,9 @@ if [ -f "$SCRIPT_DIR/package.json" ]; then
 else
     err "Run from kovin-meet-platform directory"
 fi
+
+# Set ownership
+chown -R "$APP_USER:$APP_USER" "$DIR"
 
 # =============================================================================
 # SSL CERTIFICATE
@@ -420,9 +436,10 @@ ok "Build complete"
 
 log "Starting app with PM2..."
 pm2 delete kovin-app 2>/dev/null || true
+cd "$DIR/app"
 pm2 start npm --name "kovin-app" -- start
 pm2 save
-pm2 startup systemd -u root --hp /root 2>/dev/null || true
+env PATH=$PATH:/usr/bin pm2 startup systemd -u "$APP_USER" --hp "/home/$APP_USER" 2>/dev/null || true
 ok "App started"
 
 # =============================================================================
@@ -525,6 +542,7 @@ COMMANDS:
 ========================================
 EOF
 
+chown "$APP_USER:$APP_USER" "$DIR/CREDENTIALS.txt"
 chmod 600 "$DIR/CREDENTIALS.txt"
 
 # =============================================================================
