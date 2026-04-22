@@ -727,22 +727,11 @@ systemctl disable apache2 2>/dev/null || true
 systemctl disable nginx 2>/dev/null || true
 systemctl disable httpd 2>/dev/null || true
 
-# Create certbot webroot
+# Create certbot webroot and config directory
 mkdir -p $INSTALL_DIR/certbot-webroot
-
-# Remove any existing temp-nginx container
-docker stop temp-nginx 2>/dev/null || true
-docker rm temp-nginx 2>/dev/null || true
-
-# Start nginx temporarily for ACME challenge
-log_info "Starting temporary nginx for SSL certificate verification..."
-docker run -d --name temp-nginx -p 80:80 \
-    -v $INSTALL_DIR/certbot-webroot:/var/www/certbot \
-    -v $INSTALL_DIR/config/nginx-certbot.conf:/etc/nginx/conf.d/default.conf \
-    nginx:alpine
-
-# Create simple nginx config for certbot
 mkdir -p $INSTALL_DIR/config
+
+# Create simple nginx config for certbot FIRST (before docker run)
 cat > $INSTALL_DIR/config/nginx-certbot.conf << 'CERTBOT_NGINX'
 server {
     listen 80;
@@ -759,10 +748,12 @@ server {
 }
 CERTBOT_NGINX
 
-# Restart temp-nginx with the config
+# Remove any existing temp-nginx container
 docker stop temp-nginx 2>/dev/null || true
 docker rm temp-nginx 2>/dev/null || true
 
+# Start nginx temporarily for ACME challenge
+log_info "Starting temporary nginx for SSL certificate verification..."
 docker run -d --name temp-nginx -p 80:80 \
     -v $INSTALL_DIR/certbot-webroot:/var/www/certbot \
     -v $INSTALL_DIR/config/nginx-certbot.conf:/etc/nginx/conf.d/default.conf \
