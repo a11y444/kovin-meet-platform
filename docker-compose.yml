@@ -73,30 +73,30 @@ services:
       - kovin-network
 
   # LiveKit Server (WebRTC SFU)
+  # Uses host network mode for optimal WebRTC performance
   livekit:
     image: livekit/livekit-server:latest
     container_name: kovin-livekit
     restart: unless-stopped
+    network_mode: host
     command: --config /etc/livekit.yaml --dev
     environment:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY}:${LIVEKIT_API_SECRET}"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@127.0.0.1:6379
     volumes:
       - ./config/livekit.yaml:/etc/livekit.yaml:ro
     depends_on:
       redis:
         condition: service_healthy
-    ports:
-      - "7880:7880"
-      - "7881:7881"
-      - "50000-50100:50000-50100/udp"
-    networks:
-      - kovin-network
 
   # Coturn TURN Server
+  # Uses host network mode for optimal WebRTC performance and to avoid
+  # Docker's userland proxy timeout issues with large UDP port ranges
   coturn:
     image: coturn/coturn:latest
     container_name: kovin-coturn
     restart: unless-stopped
+    network_mode: host
     command: >
       -n
       --log-file=stdout
@@ -105,7 +105,7 @@ services:
       --external-ip=${SERVER_IP:-127.0.0.1}
       --relay-ip=0.0.0.0
       --min-port=49152
-      --max-port=65535
+      --max-port=49252
       --use-auth-secret
       --static-auth-secret=${TURN_SECRET:?TURN_SECRET is required}
       --realm=${DOMAIN:-localhost}
@@ -113,14 +113,6 @@ services:
       --lt-cred-mech
       --no-cli
       --no-multicast-peers
-    ports:
-      - "3478:3478/tcp"
-      - "3478:3478/udp"
-      - "5349:5349/tcp"
-      - "5349:5349/udp"
-      - "49152-49252:49152-49252/udp"
-    networks:
-      - kovin-network
 
   # Next.js Application
   app:
